@@ -204,6 +204,15 @@ cython_debug/
 # Local datasets (large; download with download_dataset.py)
 data/
 
+# Model checkpoints
+checkpoints/
+
+# GIF visualisations
+*.gif
+
+# personal documentation
+doc/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
