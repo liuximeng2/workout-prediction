@@ -201,6 +201,9 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Local datasets (large; download with download_dataset.py)
+data/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
