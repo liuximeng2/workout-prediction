@@ -1,14 +1,10 @@
 """Video pre-processing transforms for training and validation/test splits."""
 
-from typing import Tuple
+import random
+from typing import Any, Callable, Dict, Tuple
 
-from pytorchvideo.transforms import (
-    ApplyTransformToKey,
-    Normalize,
-    RandomShortSideScale,
-    ShortSideScale,
-    UniformTemporalSubsample,
-)
+import torch
+import torch.nn.functional as F
 from torchvision.transforms import (
     CenterCrop,
     Compose,
@@ -16,6 +12,74 @@ from torchvision.transforms import (
     RandomCrop,
     RandomHorizontalFlip,
 )
+
+
+class UniformTemporalSubsample:
+    """Uniformly subsample ``num_frames`` frames from a (C, T, H, W) tensor."""
+
+    def __init__(self, num_frames: int) -> None:
+        self.num_frames = num_frames
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        t = x.shape[1]
+        indices = torch.linspace(0, t - 1, self.num_frames).long()
+        return x[:, indices]
+
+
+class Normalize:
+    """Normalize a (C, T, H, W) float tensor with per-channel mean and std."""
+
+    def __init__(self, mean: Tuple[float, ...], std: Tuple[float, ...]) -> None:
+        self.mean = torch.tensor(mean, dtype=torch.float32).view(-1, 1, 1, 1)
+        self.std = torch.tensor(std, dtype=torch.float32).view(-1, 1, 1, 1)
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        return (x - self.mean.to(x.device)) / self.std.to(x.device)
+
+
+class ShortSideScale:
+    """Resize the short spatial side of a (C, T, H, W) tensor to ``size`` pixels."""
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        _, _, h, w = x.shape
+        if h <= w:
+            new_h, new_w = self.size, max(1, int(w * self.size / h))
+        else:
+            new_h, new_w = max(1, int(h * self.size / w)), self.size
+        # interpolate expects (N, C, H, W); treat T as the batch dim.
+        return F.interpolate(
+            x.permute(1, 0, 2, 3),  # (T, C, H, W)
+            size=(new_h, new_w),
+            mode="bilinear",
+            align_corners=False,
+        ).permute(1, 0, 2, 3)  # (C, T, H, W)
+
+
+class RandomShortSideScale:
+    """Randomly resize the short side to a value in [``min_size``, ``max_size``]."""
+
+    def __init__(self, min_size: int, max_size: int) -> None:
+        self.min_size = min_size
+        self.max_size = max_size
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        size = random.randint(self.min_size, self.max_size)
+        return ShortSideScale(size)(x)
+
+
+class ApplyTransformToKey:
+    """Apply ``transform`` to ``sample[key]`` and return the updated dict."""
+
+    def __init__(self, key: str, transform: Callable) -> None:
+        self.key = key
+        self.transform = transform
+
+    def __call__(self, sample: Dict[str, Any]) -> Dict[str, Any]:
+        sample[self.key] = self.transform(sample[self.key])
+        return sample
 
 
 def make_train_transform(
