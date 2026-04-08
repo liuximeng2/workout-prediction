@@ -1,8 +1,11 @@
 """Evaluate a fine-tuned checkpoint on the held-out test split.
 
 Usage:
-    python scripts/evaluate.py --checkpoint checkpoints/videomae-workout
-    python scripts/evaluate.py --checkpoint checkpoints/videomae-workout --batch_size 8
+    python scripts/run_evaluation.py --checkpoint checkpoints/videomae-workout
+    python scripts/run_evaluation.py --checkpoint checkpoints/videomae-workout --batch_size 8
+
+Note: This file must not be named ``evaluate.py`` — that name shadows Hugging Face's
+``evaluate`` package on ``sys.path`` when running ``python scripts/<name>.py``.
 """
 
 import argparse

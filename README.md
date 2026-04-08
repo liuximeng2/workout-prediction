@@ -18,7 +18,7 @@ workout-prediction/
 │
 ├── scripts/
 │   ├── train.py                # Fine-tuning (--model selects architecture)
-│   ├── evaluate.py             # Test-split accuracy + per-class breakdown
+│   ├── eval.py       # Test-split accuracy + per-class breakdown
 │   └── inference.py            # Single-video top-k prediction
 │
 ├── model/
@@ -120,7 +120,7 @@ Global settings (data path, splits, seed) live in `config/base_config.py`.
 ### 3 — Evaluate on the test split
 
 ```bash
-python scripts/evaluate.py --checkpoint checkpoints/videomae-workout
+python scripts/eval.py --checkpoint checkpoints/videomae-workout
 ```
 
 Prints overall accuracy and a per-class breakdown.
