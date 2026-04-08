@@ -93,7 +93,7 @@ def main():
         cfg = replace(cfg, freeze_strategy=args.freeze_strategy)
 
     # ── Label maps ────────────────────────────────────────────────────────────
-    label2id, id2label = build_label_maps(cfg.data_root)
+    label2id, id2label = build_label_maps(cfg.data_roots)
     print(f"Classes ({len(label2id)}): {list(label2id.keys())}")
 
     # ── Model & processor ─────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ def main():
     val_transform = make_val_transform(num_frames, resize_to, mean, std)
 
     train_dataset, val_dataset, _ = build_datasets(
-        data_root=cfg.data_root,
+        data_roots=cfg.data_roots,
         label2id=label2id,
         clip_duration=clip_duration,
         train_transform=train_transform,

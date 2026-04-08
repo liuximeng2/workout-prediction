@@ -95,7 +95,7 @@ uv pip install -r requirements.txt
 python download_dataset.py
 ```
 
-Videos are saved under `data/verified_data/verified_data/data_btc_10s/<class>/`.
+Videos live under `data/verified_data/verified_data/` in `data_btc_10s/<class>/` and `data_crawl_10s/<class>/`; training uses both by default.
 
 ### 2 — Fine-tune VideoMAE
 
@@ -152,7 +152,7 @@ Rank  Label                              Score
 
 | Field | Default | Description |
 |---|---|---|
-| `data_root` | `data/verified_data/…/data_btc_10s` | Root of the class folders |
+| `data_roots` | `data_btc_10s` and `data_crawl_10s` under `…/verified_data/` | Class-folder roots (videos merged) |
 | `train_split` | `0.70` | Fraction of videos for training |
 | `val_split` | `0.15` | Fraction of videos for validation |
 | `output_base` | `checkpoints` | Base directory for checkpoints |

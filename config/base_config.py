@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Tuple
 
 
 @dataclass
@@ -13,7 +14,11 @@ class BaseConfig:
     """
 
     # ── Data ──────────────────────────────────────────────────────────────────
-    data_root: Path = Path("data/verified_data/verified_data/data_btc_10s")
+    # Each path is a root with one sub-folder per class (videos merged for training).
+    data_roots: Tuple[Path, ...] = (
+        Path("data/verified_data/verified_data/data_btc_10s"),
+        Path("data/verified_data/verified_data/data_crawl_10s"),
+    )
 
     # Stratified split fractions (test = 1 - train_split - val_split)
     train_split: float = 0.70

@@ -2,7 +2,7 @@
 
 import random
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import av
 import numpy as np
@@ -11,37 +11,44 @@ from torch.utils.data import Dataset
 from torchvision.transforms import Compose
 
 
-def build_label_maps(data_root: Path) -> Tuple[Dict[str, int], Dict[int, str]]:
-    """Derive label↔id mappings from the class subdirectories.
+def build_label_maps(data_roots: Sequence[Path]) -> Tuple[Dict[str, int], Dict[int, str]]:
+    """Derive label↔id mappings from class subdirectories across one or more roots.
 
     Args:
-        data_root: Path to the directory that contains one sub-folder per class.
+        data_roots: Each path is a directory that contains one sub-folder per class.
+            Class names are the union of folder names across all roots (sorted).
 
     Returns:
         ``(label2id, id2label)`` dictionaries.
     """
-    class_names = sorted(p.name for p in data_root.iterdir() if p.is_dir())
+    names: Set[str] = set()
+    for data_root in data_roots:
+        for p in data_root.iterdir():
+            if p.is_dir():
+                names.add(p.name)
+    class_names = sorted(names)
     label2id = {name: idx for idx, name in enumerate(class_names)}
     id2label = {idx: name for name, idx in label2id.items()}
     return label2id, id2label
 
 
 def _collect_labeled_paths(
-    data_root: Path,
+    data_roots: Sequence[Path],
     label2id: Dict[str, int],
     extensions: Tuple[str, ...] = (".mp4", ".avi", ".mov"),
 ) -> List[Tuple[str, Dict]]:
-    """Return a list of ``(video_path_str, {"label": int})`` tuples."""
+    """Return a list of ``(video_path_str, {"label": int})`` tuples from all roots."""
     labeled: List[Tuple[str, Dict]] = []
-    for class_dir in sorted(data_root.iterdir()):
-        if not class_dir.is_dir():
-            continue
-        label = label2id.get(class_dir.name)
-        if label is None:
-            continue
-        for video_path in sorted(class_dir.iterdir()):
-            if video_path.suffix.lower() in extensions:
-                labeled.append((str(video_path), {"label": label}))
+    for data_root in data_roots:
+        for class_dir in sorted(data_root.iterdir()):
+            if not class_dir.is_dir():
+                continue
+            label = label2id.get(class_dir.name)
+            if label is None:
+                continue
+            for video_path in sorted(class_dir.iterdir()):
+                if video_path.suffix.lower() in extensions:
+                    labeled.append((str(video_path), {"label": label}))
     return labeled
 
 
@@ -163,7 +170,7 @@ class VideoClipDataset(Dataset):
 
 
 def build_datasets(
-    data_root: Path,
+    data_roots: Sequence[Path],
     label2id: Dict[str, int],
     clip_duration: float,
     train_transform: Compose,
@@ -175,7 +182,7 @@ def build_datasets(
     """Build train, val, and test ``VideoClipDataset`` objects.
 
     Args:
-        data_root:       Root directory with one sub-folder per class.
+        data_roots:      One or more roots, each with one sub-folder per class.
         label2id:        Mapping from class name to integer id.
         clip_duration:   Duration (seconds) of each sampled clip.
         train_transform: Transform applied to training clips.
@@ -187,7 +194,7 @@ def build_datasets(
     Returns:
         ``(train_dataset, val_dataset, test_dataset)``
     """
-    all_paths = _collect_labeled_paths(data_root, label2id)
+    all_paths = _collect_labeled_paths(data_roots, label2id)
     train_paths, val_paths, test_paths = _split_paths(
         all_paths, train_split, val_split, seed
     )

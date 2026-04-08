@@ -59,10 +59,10 @@ def main():
     clip_duration = num_frames * cfg.sample_rate / cfg.fps
 
     # ── Build test dataset ────────────────────────────────────────────────────
-    label2id, id2label = build_label_maps(cfg.data_root)
+    label2id, id2label = build_label_maps(cfg.data_roots)
     val_transform = make_val_transform(num_frames, resize_to, mean, std)
     _, _, test_dataset = build_datasets(
-        data_root=cfg.data_root,
+        data_roots=cfg.data_roots,
         label2id=label2id,
         clip_duration=clip_duration,
         train_transform=val_transform,
