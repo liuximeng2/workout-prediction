@@ -21,7 +21,7 @@ Fusion:          Weighted average of softmax logits from both streams.
                  a fixed 0.5/0.5 average instead.
 """
 
-from typing import Dict, Literal, Tuple
+from typing import Literal, Tuple
 
 import torch
 import torch.nn as nn
@@ -139,8 +139,7 @@ def build_model(
     num_classes: int,
     num_flow_frames: int = 10,
     learnable_fusion: bool = True,
-    label2id: Dict[str, int] = None,
-    id2label: Dict[int, str] = None,
+    **_kwargs,
 ) -> Tuple[TwoStreamNet, None]:
     """Instantiate a TwoStreamNet.  Returns ``(model, None)`` to match the
     registry interface (no separate processor needed for this model).
@@ -193,12 +192,6 @@ def apply_freeze_strategy(model: TwoStreamNet, strategy: FreezeStrategy) -> None
             p.requires_grad = True
         if model.learnable_fusion:
             model._fusion_logit.requires_grad = True
-
-    else:
-        raise ValueError(
-            f"Unknown freeze_strategy '{strategy}'. "
-            "Choose 'full', 'head_only', 'spatial_only', or 'temporal_only'."
-        )
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total     = sum(p.numel() for p in model.parameters())
