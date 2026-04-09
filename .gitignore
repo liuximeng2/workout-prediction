@@ -204,8 +204,10 @@ cython_debug/
 # Local datasets (large; download with download_dataset.py)
 data/
 
-# Model checkpoints
-checkpoints/
+# Checkpoints — track JSON/metadata; ignore weight files (and large optimizer state).
+checkpoints/**/*.safetensors
+checkpoints/**/pytorch_model.bin
+checkpoints/**/optimizer.pt
 
 # GIF visualisations
 *.gif
