@@ -230,7 +230,7 @@ class TwoStreamDataset(Dataset):
 
     # ── __getitem__ ───────────────────────────────────────────────────────────
 
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
+    def _get_sample(self, idx: int) -> Dict[str, Any]:
         path, info = self.labeled_paths[idx]
         label = info["label"]
 
@@ -260,3 +260,21 @@ class TwoStreamDataset(Dataset):
         flow = torch.clamp(flow / FLOW_CLIP, -1.0, 1.0)
 
         return {"video": rgb_frame, "flow": flow, "label": label}
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """Load sample; on corrupt/unreadable video, try other indices (PyAV FFmpeg errors)."""
+        n = len(self.labeled_paths)
+        if n == 0:
+            raise IndexError("empty dataset")
+        max_attempts = min(n, 64)
+        last: Optional[BaseException] = None
+        for k in range(max_attempts):
+            j = (idx + k) % n
+            try:
+                return self._get_sample(j)
+            except av.error.FFmpegError as e:
+                last = e
+                continue
+        raise RuntimeError(
+            f"Could not decode any of {max_attempts} consecutive videos starting at index {idx}"
+        ) from last
