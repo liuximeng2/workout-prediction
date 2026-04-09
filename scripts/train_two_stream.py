@@ -113,7 +113,14 @@ def main():
     if overrides:
         cfg = replace(cfg, **overrides)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    # Pinned host memory speeds CPU→CUDA copies; MPS does not use it (warns if True).
+    pin_memory = device.type == "cuda"
     print(f"Device : {device}")
     print(f"Config : {cfg}")
 
@@ -152,11 +159,11 @@ def main():
 
     train_loader = DataLoader(
         train_ds, batch_size=cfg.batch_size, shuffle=True,
-        num_workers=4, pin_memory=True, collate_fn=collate_fn,
+        num_workers=4, pin_memory=pin_memory, collate_fn=collate_fn,
     )
     val_loader = DataLoader(
         val_ds, batch_size=cfg.batch_size, shuffle=False,
-        num_workers=4, pin_memory=True, collate_fn=collate_fn,
+        num_workers=4, pin_memory=pin_memory, collate_fn=collate_fn,
     )
     print(f"Train: {len(train_ds)} samples | Val: {len(val_ds)} samples")
 
