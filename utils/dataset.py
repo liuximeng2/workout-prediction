@@ -66,6 +66,59 @@ def build_label_maps(data_roots: Sequence[Path]) -> Tuple[Dict[str, int], Dict[i
     return label2id, id2label
 
 
+def flow_dir_for_video(video_path: Path, flow_root: Path, repo_root: Optional[Path] = None) -> Path:
+    """Return the expected flow output directory for a given video path.
+
+    Mirrors the layout written by ``scripts/precompute_flow.py``:
+        ``<flow_root>/<data_root_stem_parts>/<video_stem>/``
+    """
+    if repo_root is None:
+        repo_root = Path(__file__).resolve().parent.parent
+    video_path = Path(video_path).resolve()
+    try:
+        rel = video_path.relative_to(repo_root)
+        stem_parts = rel.parts[1:-1]  # strip leading "data/" directory segment
+    except ValueError:
+        stem_parts = (video_path.parent.parent.name, video_path.parent.name)
+    return flow_root / Path(*stem_parts) / video_path.stem
+
+
+def filter_valid_flow(
+    labeled_paths: List[Tuple[str, Dict]],
+    flow_root: Path,
+    repo_root: Optional[Path] = None,
+    verbose: bool = True,
+) -> List[Tuple[str, Dict]]:
+    """Remove entries whose pre-computed flow directory is missing or incomplete.
+
+    A video is considered valid if ``<flow_dir>/meta.npy`` exists, which
+    ``scripts/precompute_flow.py`` writes only on successful completion.
+
+    Args:
+        labeled_paths: List of ``(video_path_str, {"label": int})`` tuples.
+        flow_root:     Root directory containing pre-computed flow files.
+        repo_root:     Repo root used to reconstruct relative paths (auto-detected if None).
+        verbose:       Print a summary of how many videos were dropped.
+
+    Returns:
+        Filtered list containing only videos with valid flow.
+    """
+    valid, dropped = [], []
+    for path_str, info in labeled_paths:
+        fdir = flow_dir_for_video(Path(path_str), flow_root, repo_root)
+        if (fdir / "meta.npy").exists():
+            valid.append((path_str, info))
+        else:
+            dropped.append(path_str)
+
+    if verbose:
+        print(
+            f"[flow filter] {len(valid)} valid, {len(dropped)} dropped "
+            f"(no flow / corrupt) out of {len(labeled_paths)} total."
+        )
+    return valid
+
+
 def _collect_labeled_paths(
     data_roots: Sequence[Path],
     label2id: Dict[str, int],

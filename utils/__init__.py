@@ -3,6 +3,8 @@
 from utils.dataset import (
     build_datasets,
     build_label_maps,
+    filter_valid_flow,
+    flow_dir_for_video,
     resolve_data_roots,
     resolve_roots_for_label_maps,
 )
@@ -12,6 +14,8 @@ from utils.visualization import display_gif, save_gif
 __all__ = [
     "build_datasets",
     "build_label_maps",
+    "filter_valid_flow",
+    "flow_dir_for_video",
     "resolve_data_roots",
     "resolve_roots_for_label_maps",
     "make_train_transform",

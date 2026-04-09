@@ -34,6 +34,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
 from scripts.precompute_flow import FLOW_CLIP
+from utils.dataset import flow_dir_for_video
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -104,14 +105,7 @@ def flow_to_hsv(flow: np.ndarray) -> np.ndarray:
 
 
 def find_flow_dir(video_path: Path, flow_root: Path) -> Path:
-    """Reconstruct the flow output directory for a given video path."""
-    repo_root = Path(__file__).resolve().parent.parent
-    try:
-        rel = video_path.resolve().relative_to(repo_root)
-        stem_parts = rel.parts[1:-1]   # strip leading "data/" segment
-    except ValueError:
-        stem_parts = (video_path.parent.parent.name, video_path.parent.name)
-    return flow_root / Path(*stem_parts) / video_path.stem
+    return flow_dir_for_video(video_path, flow_root)
 
 
 def select_frame_indices(n_rgb: int, n_flow: int, num_frames: int) -> list[int]:
