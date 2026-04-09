@@ -38,10 +38,9 @@ import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from config.base_config import BaseConfig
-from utils.dataset import resolve_data_roots
+from utils.dataset import FLOW_CLIP, resolve_data_roots
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-FLOW_CLIP = 20.0          # pixel/frame displacement clipped to this magnitude
 VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv"}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

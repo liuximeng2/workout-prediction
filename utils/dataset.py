@@ -5,10 +5,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import av
-import numpy as np
 import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose
+
+# Optical flow uint8 encoding (must match scripts/precompute_flow.py).
+FLOW_CLIP = 20.0  # pixel/frame displacement clipped to this magnitude
 
 
 def resolve_data_roots(

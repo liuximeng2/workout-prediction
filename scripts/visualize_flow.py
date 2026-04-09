@@ -33,8 +33,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-from scripts.precompute_flow import FLOW_CLIP
-from utils.dataset import flow_dir_for_video
+from utils.dataset import FLOW_CLIP, flow_dir_for_video
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -254,7 +253,7 @@ def main():
 
     if args.gif:
         gif_path = out_path.with_suffix(".gif")
-        export_gif(video_path, flow_dir, rgb_frames, n_flow, args.gif_fps, gif_path)
+        export_gif(flow_dir, rgb_frames, n_flow, args.gif_fps, gif_path)
 
     # if args.show:
     #     plt.show()
@@ -287,7 +286,6 @@ def _render_gif_frame(rgb: np.ndarray, flow: np.ndarray | None, frame_idx: int) 
 
 
 def export_gif(
-    video_path: Path,
     flow_dir: Path,
     rgb_frames: list[np.ndarray],
     n_flow: int,
