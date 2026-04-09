@@ -18,10 +18,11 @@ To recover float flow at training time:
     flow_f32 = arr.astype(np.float32) / 255.0 * (2 * FLOW_CLIP) - FLOW_CLIP
 
 Usage:
-    python scripts/precompute_flow.py                   # all data roots
-    python scripts/precompute_flow.py --max_short_side 320   # resize first
-    python scripts/precompute_flow.py --workers 4       # parallel jobs
-    python scripts/precompute_flow.py --dry_run         # print plan only
+    python scripts/precompute_flow.py                          # all data roots from BaseConfig
+    python scripts/precompute_flow.py --input_dirs data/reencoded/data_btc_10s data/reencoded/data_crawl_10s data/reencoded/test
+    python scripts/precompute_flow.py --max_short_side 320     # resize first
+    python scripts/precompute_flow.py --workers 4              # parallel jobs
+    python scripts/precompute_flow.py --dry_run                # print plan only
 """
 
 import argparse
@@ -161,6 +162,14 @@ def _worker(args):
 def main():
     parser = argparse.ArgumentParser(description="Pre-compute Farneback optical flow.")
     parser.add_argument(
+        "--input_dirs",
+        nargs="+",
+        default=None,
+        metavar="DIR",
+        help="One or more video root directories (each with <class>/<video> layout). "
+             "Overrides BaseConfig.data_roots when provided.",
+    )
+    parser.add_argument(
         "--flow_root",
         type=Path,
         default=Path("data/flow"),
@@ -201,9 +210,13 @@ def main():
 
     max_short_side = args.max_short_side if args.max_short_side > 0 else None
 
-    # Resolve data roots from the base config
-    cfg = BaseConfig()
-    data_roots = list(resolve_data_roots(cfg.data_roots))
+    # Resolve data roots: explicit --input_dirs override, otherwise BaseConfig
+    repo_root = Path(__file__).resolve().parent.parent
+    if args.input_dirs:
+        data_roots = [Path(d).expanduser().resolve() for d in args.input_dirs]
+    else:
+        cfg = BaseConfig()
+        data_roots = list(resolve_data_roots(cfg.data_roots, repo_root=repo_root))
 
     # Collect all videos
     all_videos = _collect_videos(data_roots)
@@ -218,7 +231,6 @@ def main():
     print(f"Skip existing: {args.skip_existing}")
 
     # Build work list: (video_path, out_dir, max_short_side, skip_existing)
-    repo_root = Path(__file__).resolve().parent.parent
     work = []
     for video_path, class_name in all_videos:
         # Mirror directory structure: flow/<data_root_stem>/<class>/<video_stem>/
