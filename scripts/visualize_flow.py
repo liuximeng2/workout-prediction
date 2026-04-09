@@ -17,7 +17,7 @@ Usage:
     python scripts/visualize_flow.py <path/to/video.mp4> --num_frames 8 --show
     python scripts/visualize_flow.py <path/to/video.mp4> --out my_viz.png   # custom path
     python scripts/visualize_flow.py <path/to/video.mp4> --gif
-    python scripts/visualize_flow.py "data/verified_data/verified_data/data_btc_10s/barbell biceps curl/0b43a151-8995-4f7e-8568-45d65996a19c.mp4" --gif --gif_fps 10 --num_frames 30
+    python scripts/visualize_flow.py "data/reencoded/data_btc_10s/barbell biceps curl/0b43a151-8995-4f7e-8568-45d65996a19c.mp4" --gif --gif_fps 10 --num_frames 30
 """
 
 import argparse
