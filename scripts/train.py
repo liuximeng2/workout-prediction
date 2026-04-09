@@ -22,7 +22,14 @@ from transformers import TrainingArguments, Trainer
 from config.models import VideoMAEConfig
 from model import build_model
 from model.video_mae.model import apply_freeze_strategy, get_video_params
-from utils import build_datasets, build_label_maps, make_train_transform, make_val_transform
+from utils import (
+    build_datasets,
+    build_label_maps,
+    make_train_transform,
+    make_val_transform,
+    resolve_data_roots,
+    resolve_roots_for_label_maps,
+)
 
 # ── Registry of available model configs ──────────────────────────────────────
 MODEL_CONFIGS = {
@@ -92,8 +99,12 @@ def main():
     if args.freeze_strategy is not None:
         cfg = replace(cfg, freeze_strategy=args.freeze_strategy)
 
+    data_roots = resolve_data_roots(cfg.data_roots)
+
     # ── Label maps ────────────────────────────────────────────────────────────
-    label2id, id2label = build_label_maps(cfg.data_roots)
+    label2id, id2label = build_label_maps(
+        resolve_roots_for_label_maps(cfg.data_roots, cfg.test_data_roots)
+    )
     print(f"Classes ({len(label2id)}): {list(label2id.keys())}")
 
     # ── Model & processor ─────────────────────────────────────────────────────
@@ -115,7 +126,7 @@ def main():
     val_transform = make_val_transform(num_frames, resize_to, mean, std)
 
     train_dataset, val_dataset, _ = build_datasets(
-        data_roots=cfg.data_roots,
+        data_roots=data_roots,
         label2id=label2id,
         clip_duration=clip_duration,
         train_transform=train_transform,

@@ -38,7 +38,7 @@ class VideoMAEConfig(BaseConfig):
     # "full"      — fine-tune all ~86.7M parameters (best accuracy, needs more data)
     # "head_only" — freeze encoder, train only the 17K classification head (fast,
     #               low memory, good when data is scarce)
-    freeze_strategy: str = "head_only"
+    freeze_strategy: str = "full"
 
     # ── HuggingFace Hub ───────────────────────────────────────────────────────
     push_to_hub: bool = False

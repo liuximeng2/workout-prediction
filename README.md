@@ -153,6 +153,7 @@ Rank  Label                              Score
 | Field | Default | Description |
 |---|---|---|
 | `data_roots` | `data_btc_10s` and `data_crawl_10s` under `…/verified_data/` | Class-folder roots (videos merged) |
+| `test_data_roots` | `(data/test/test,)` | If that tree has one folder per class with videos (same as training data layout), eval uses it; else stratified test split from `data_roots` |
 | `train_split` | `0.70` | Fraction of videos for training |
 | `val_split` | `0.15` | Fraction of videos for validation |
 | `output_base` | `checkpoints` | Base directory for checkpoints |

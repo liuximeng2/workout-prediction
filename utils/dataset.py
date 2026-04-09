@@ -11,6 +11,40 @@ from torch.utils.data import Dataset
 from torchvision.transforms import Compose
 
 
+def resolve_data_roots(
+    data_roots: Sequence[Path],
+    *,
+    repo_root: Optional[Path] = None,
+) -> Tuple[Path, ...]:
+    """Make ``BaseConfig.data_roots`` absolute under the project root.
+
+    Config paths are relative to the repo root. Resolving them against
+    ``Path.cwd()`` fails when the process cwd is elsewhere (e.g. a Jupyter
+    notebook opened from ``analysis/``).
+    """
+    root = repo_root if repo_root is not None else Path(__file__).resolve().parent.parent
+    resolved: list[Path] = []
+    for p in data_roots:
+        p = Path(p)
+        resolved.append(p.resolve() if p.is_absolute() else (root / p).resolve())
+    return tuple(resolved)
+
+
+def resolve_roots_for_label_maps(
+    data_roots: Sequence[Path],
+    test_data_roots: Optional[Sequence[Path]],
+    *,
+    repo_root: Optional[Path] = None,
+) -> Tuple[Path, ...]:
+    """Directories scanned for class-folder names: training roots plus optional ``data/test``-style tree."""
+    roots = list(resolve_data_roots(data_roots, repo_root=repo_root))
+    if test_data_roots:
+        extra = resolve_data_roots(test_data_roots, repo_root=repo_root)
+        if extra and extra[0].is_dir():
+            roots.extend(extra)
+    return tuple(roots)
+
+
 def build_label_maps(data_roots: Sequence[Path]) -> Tuple[Dict[str, int], Dict[int, str]]:
     """Derive label↔id mappings from class subdirectories across one or more roots.
 
@@ -178,6 +212,7 @@ def build_datasets(
     train_split: float = 0.70,
     val_split: float = 0.15,
     seed: int = 42,
+    test_data_roots: Optional[Sequence[Path]] = None,
 ) -> Tuple[VideoClipDataset, VideoClipDataset, VideoClipDataset]:
     """Build train, val, and test ``VideoClipDataset`` objects.
 
@@ -190,14 +225,27 @@ def build_datasets(
         train_split:     Fraction of videos assigned to training.
         val_split:       Fraction of videos assigned to validation.
         seed:            Random seed for the split.
+        test_data_roots: If set, resolved absolute paths to a dedicated test tree
+            (``…/test/<class>/*.mp4``). When the first path exists and yields at least
+            one video, that list is the test set; otherwise the stratified test split
+            from ``data_roots`` is used.
 
     Returns:
         ``(train_dataset, val_dataset, test_dataset)``
     """
     all_paths = _collect_labeled_paths(data_roots, label2id)
-    train_paths, val_paths, test_paths = _split_paths(
-        all_paths, train_split, val_split, seed
-    )
+    use_explicit_test = False
+    if test_data_roots and test_data_roots[0].is_dir():
+        explicit_test = _collect_labeled_paths(tuple(test_data_roots), label2id)
+        if len(explicit_test) > 0:
+            use_explicit_test = True
+            train_paths, val_paths, _ = _split_paths(all_paths, train_split, val_split, seed)
+            test_paths = explicit_test
+
+    if not use_explicit_test:
+        train_paths, val_paths, test_paths = _split_paths(
+            all_paths, train_split, val_split, seed
+        )
 
     train_dataset = VideoClipDataset(
         labeled_paths=train_paths,

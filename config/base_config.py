@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 @dataclass
@@ -19,6 +19,12 @@ class BaseConfig:
         Path("data/verified_data/verified_data/data_btc_10s"),
         Path("data/verified_data/verified_data/data_crawl_10s"),
     )
+
+    # Hold-out test videos: one sub-folder per class (same names as under ``data_roots``).
+    # This repo stores them under ``data/test/test/<class>/`` (not ``data/test/<class>/``).
+    # If no videos are found here, eval/analysis fall back to the stratified test split
+    # from ``data_roots`` (often a few hundred clips). Set to ``None`` to always use that split.
+    test_data_roots: Optional[Tuple[Path, ...]] = (Path("data/test/test"),)
 
     # Stratified split fractions (test = 1 - train_split - val_split)
     train_split: float = 0.70

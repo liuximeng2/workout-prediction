@@ -21,7 +21,13 @@ from transformers import VideoMAEForVideoClassification, VideoMAEImageProcessor
 
 from config.models import VideoMAEConfig
 from model.video_mae.model import get_video_params
-from utils import build_datasets, build_label_maps, make_val_transform
+from utils import (
+    build_datasets,
+    build_label_maps,
+    make_val_transform,
+    resolve_data_roots,
+    resolve_roots_for_label_maps,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,10 +65,16 @@ def main():
     clip_duration = num_frames * cfg.sample_rate / cfg.fps
 
     # ── Build test dataset ────────────────────────────────────────────────────
-    label2id, id2label = build_label_maps(cfg.data_roots)
+    data_roots = resolve_data_roots(cfg.data_roots)
+    test_roots = (
+        resolve_data_roots(cfg.test_data_roots) if cfg.test_data_roots else None
+    )
+    label2id, id2label = build_label_maps(
+        resolve_roots_for_label_maps(cfg.data_roots, cfg.test_data_roots)
+    )
     val_transform = make_val_transform(num_frames, resize_to, mean, std)
     _, _, test_dataset = build_datasets(
-        data_roots=cfg.data_roots,
+        data_roots=data_roots,
         label2id=label2id,
         clip_duration=clip_duration,
         train_transform=val_transform,
@@ -70,6 +82,7 @@ def main():
         train_split=cfg.train_split,
         val_split=cfg.val_split,
         seed=cfg.seed,
+        test_data_roots=test_roots,
     )
     print(f"Test videos: {test_dataset.num_videos}")
 
