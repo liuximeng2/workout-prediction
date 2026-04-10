@@ -4,10 +4,13 @@ Supports both VideoMAE (HuggingFace) and Two-Stream CNN checkpoints.
 
 Usage:
     # VideoMAE (HuggingFace checkpoint directory)
-    python scripts/eval.py --model video_mae --checkpoint checkpoints/videomae-workout
+    python scripts/eval.py --model video_mae --checkpoint checkpoints/videomae
 
     # Two-Stream CNN (.pt file)
     python scripts/eval.py --model two_stream --checkpoint checkpoints/two-stream-workout/best.pt
+
+    # Multi-clip evaluation (average logits over 5 evenly-spaced clips per video)
+    python scripts/eval.py --model two_stream --checkpoint best.pt --num_clips 5
 
 Note: This file must not be named ``evaluate.py`` — that name shadows Hugging Face's
 ``evaluate`` package on ``sys.path`` when running ``python scripts/<name>.py``.
@@ -51,7 +54,34 @@ def parse_args() -> argparse.Namespace:
              "Defaults to the model config's output_dir / best.pt.",
     )
     parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument(
+        "--num_clips",
+        type=int,
+        default=5,
+        help="Number of evenly-spaced clips to sample per video. "
+             "Logits are averaged across clips before prediction (default: 1 = center clip only).",
+    )
     return parser.parse_args()
+
+
+def _clip_positions(num_clips: int) -> list:
+    """Return *num_clips* evenly-spaced positions in [0, 1]."""
+    if num_clips == 1:
+        return [0.5]                       # centre clip (matches old behaviour)
+    return [i / (num_clips - 1) for i in range(num_clips)]
+
+
+def _aggregate_clip_logits(
+    per_video_logits: list,
+    video_labels: list,
+) -> tuple:
+    """Average logits across clips per video and return predictions + labels."""
+    all_preds, all_labels = [], []
+    for logits_list, label in zip(per_video_logits, video_labels):
+        avg = torch.stack(logits_list).mean(dim=0)
+        all_preds.append(avg.argmax().item())
+        all_labels.append(label)
+    return all_preds, all_labels
 
 
 def _video_mae_collate(examples):
@@ -64,7 +94,7 @@ def _video_mae_collate(examples):
 
 # ── VideoMAE evaluation ───────────────────────────────────────────────────────
 
-def eval_video_mae(ckpt: str, batch_size: int) -> None:
+def eval_video_mae(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
     import evaluate as hf_evaluate
     from transformers import VideoMAEForVideoClassification, VideoMAEImageProcessor
 
@@ -111,16 +141,31 @@ def eval_video_mae(ckpt: str, batch_size: int) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
 
-    loader = DataLoader(test_dataset, batch_size=batch_size,
-                        collate_fn=_video_mae_collate, num_workers=2)
+    positions = _clip_positions(num_clips)
+    n_videos = len(test_dataset)
+    per_video_logits = [[] for _ in range(n_videos)]
+    video_labels = [0] * n_videos
 
-    all_preds, all_labels = [], []
+    print(f"Clips/video: {num_clips}  positions: "
+          f"{[f'{p:.2f}' for p in positions]}")
+
     with torch.no_grad():
-        for batch in loader:
-            outputs = model(pixel_values=batch["pixel_values"].to(device))
-            preds = outputs.logits.argmax(dim=-1)
-            all_preds.extend(preds.cpu().tolist())
-            all_labels.extend(batch["labels"].tolist())
+        for clip_idx, pos in enumerate(positions):
+            test_dataset.clip_position = pos
+            loader = DataLoader(test_dataset, batch_size=batch_size,
+                                collate_fn=_video_mae_collate, num_workers=2)
+            vid_offset = 0
+            for batch in loader:
+                outputs = model(pixel_values=batch["pixel_values"].to(device))
+                logits = outputs.logits.cpu()
+                labels = batch["labels"]
+                for i in range(logits.size(0)):
+                    per_video_logits[vid_offset + i].append(logits[i])
+                    video_labels[vid_offset + i] = labels[i].item()
+                vid_offset += logits.size(0)
+            print(f"  clip {clip_idx + 1}/{num_clips} (pos={pos:.2f}) done")
+
+    all_preds, all_labels = _aggregate_clip_logits(per_video_logits, video_labels)
 
     results = hf_evaluate.load("accuracy").compute(
         predictions=all_preds, references=all_labels
@@ -138,7 +183,7 @@ def _two_stream_collate(batch):
 
 # ── Two-Stream evaluation ─────────────────────────────────────────────────────
 
-def eval_two_stream(ckpt_path: str, batch_size: int) -> None:
+def eval_two_stream(ckpt_path: str, batch_size: int, num_clips: int = 1) -> None:
     from config.models.two_stream_config import TwoStreamConfig
     from model.two_stream.model import build_model
     from utils.flow_dataset import TwoStreamDataset
@@ -194,36 +239,45 @@ def eval_two_stream(ckpt_path: str, batch_size: int) -> None:
     )
     print(f"Test samples: {len(test_ds)}")
 
-    pin_memory = device.type == "cuda"
-    loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
-                        num_workers=4, pin_memory=pin_memory,
-                        collate_fn=_two_stream_collate)
+    positions = _clip_positions(num_clips)
+    n_videos = len(test_ds)
+    per_video_logits = [[] for _ in range(n_videos)]
+    video_labels = [0] * n_videos
 
-    # ── Inference loop ────────────────────────────────────────────────────────
-    criterion = nn.CrossEntropyLoss()
-    total_loss, correct, total = 0.0, 0, 0
-    all_preds, all_labels = [], []
+    print(f"Clips/video: {num_clips}  positions: "
+          f"{[f'{p:.2f}' for p in positions]}")
+
+    pin_memory = device.type == "cuda"
 
     with torch.no_grad():
-        for batch in loader:
-            video  = batch["video"].to(device)
-            flow   = batch["flow"].to(device)
-            labels = batch["label"].to(device)
+        for clip_idx, pos in enumerate(positions):
+            test_ds.clip_position = pos
+            loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
+                                num_workers=4, pin_memory=pin_memory,
+                                collate_fn=_two_stream_collate)
+            vid_offset = 0
+            for batch in loader:
+                video  = batch["video"].to(device)
+                flow   = batch["flow"].to(device)
+                labels = batch["label"]
 
-            logits = model(video, flow)
-            loss   = criterion(logits, labels)
+                logits = model(video, flow).cpu()
+                for i in range(logits.size(0)):
+                    per_video_logits[vid_offset + i].append(logits[i])
+                    video_labels[vid_offset + i] = labels[i].item()
+                vid_offset += logits.size(0)
+            print(f"  clip {clip_idx + 1}/{num_clips} (pos={pos:.2f}) done")
 
-            preds = logits.argmax(dim=-1)
-            bs = labels.size(0)
-            total_loss += loss.item() * bs
-            correct    += (preds == labels).sum().item()
-            total      += bs
+    all_preds, all_labels = _aggregate_clip_logits(per_video_logits, video_labels)
 
-            all_preds.extend(preds.cpu().tolist())
-            all_labels.extend(labels.cpu().tolist())
+    # Compute loss on the averaged logits
+    avg_logits = torch.stack([torch.stack(v).mean(dim=0) for v in per_video_logits])
+    label_tensor = torch.tensor(all_labels, dtype=torch.long)
+    avg_loss = nn.CrossEntropyLoss()(avg_logits, label_tensor).item()
+    accuracy = sum(p == l for p, l in zip(all_preds, all_labels)) / len(all_labels)
 
-    print(f"\nTest loss    : {total_loss / total:.4f}")
-    print(f"Test accuracy: {correct / total:.4f}")
+    print(f"\nTest loss    : {avg_loss:.4f}")
+    print(f"Test accuracy: {accuracy:.4f}")
     print(f"Flow weight  : {model.flow_weight:.3f}")
     _print_per_class(all_preds, all_labels, id2label)
 
@@ -261,7 +315,7 @@ def main() -> None:
         ckpt = args.checkpoint or str(repo_root / VideoMAEConfig().output_dir)
         print(f"Model      : VideoMAE")
         print(f"Checkpoint : {ckpt}\n")
-        eval_video_mae(ckpt, args.batch_size)
+        eval_video_mae(ckpt, args.batch_size, args.num_clips)
 
     elif args.model == "two_stream":
         from config.models.two_stream_config import TwoStreamConfig
@@ -269,7 +323,7 @@ def main() -> None:
         ckpt = args.checkpoint or str(default_ckpt)
         print(f"Model      : Two-Stream CNN")
         print(f"Checkpoint : {ckpt}\n")
-        eval_two_stream(ckpt, args.batch_size)
+        eval_two_stream(ckpt, args.batch_size, args.num_clips)
 
 
 if __name__ == "__main__":

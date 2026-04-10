@@ -193,11 +193,13 @@ class VideoClipDataset(Dataset):
         clip_duration: float,
         transform: Optional[Callable] = None,
         mode: str = "random",
+        clip_position: Optional[float] = None,
     ) -> None:
         self.labeled_paths = labeled_paths
         self.clip_duration = clip_duration
         self.transform = transform
         self.mode = mode
+        self.clip_position = clip_position
 
     def __len__(self) -> int:
         return len(self.labeled_paths)
@@ -224,6 +226,8 @@ class VideoClipDataset(Dataset):
             max_start = max(0.0, duration - self.clip_duration)
             if self.mode == "random":
                 start = random.uniform(0.0, max_start)
+            elif self.clip_position is not None:
+                start = max_start * self.clip_position
             else:
                 start = max_start / 2.0
 

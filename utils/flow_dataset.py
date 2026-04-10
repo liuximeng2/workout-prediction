@@ -149,6 +149,7 @@ class TwoStreamDataset(Dataset):
         mean: Tuple[float, ...] = RGB_MEAN,
         std: Tuple[float, ...] = RGB_STD,
         repo_root: Optional[Path] = None,
+        clip_position: Optional[float] = None,
     ) -> None:
         self.labeled_paths = labeled_paths
         self.flow_root = Path(flow_root)
@@ -156,6 +157,7 @@ class TwoStreamDataset(Dataset):
         self.num_flow_frames = num_flow_frames
         self.mode = mode
         self.repo_root = repo_root
+        self.clip_position = clip_position
 
         self._rgb_mean = torch.tensor(mean).view(3, 1, 1)
         self._rgb_std  = torch.tensor(std).view(3, 1, 1)
@@ -184,7 +186,12 @@ class TwoStreamDataset(Dataset):
                 duration = self.clip_duration
 
             max_start = max(0.0, duration - self.clip_duration)
-            start = random.uniform(0.0, max_start) if self.mode == "train" else max_start / 2.0
+            if self.mode == "train":
+                start = random.uniform(0.0, max_start)
+            elif self.clip_position is not None:
+                start = max_start * self.clip_position
+            else:
+                start = max_start / 2.0
 
             seek_pts = int(start / stream.time_base)
             container.seek(seek_pts, stream=stream)
