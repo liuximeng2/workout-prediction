@@ -70,6 +70,12 @@ class RandomShortSideScale:
         return ShortSideScale(size)(x)
 
 
+def uint8_to_float01(x: torch.Tensor) -> torch.Tensor:
+    """Scale values from [0, 255] to [0, 1]. Module-level for DataLoader pickling."""
+
+    return x / 255.0
+
+
 class ApplyTransformToKey:
     """Apply ``transform`` to ``sample[key]`` and return the updated dict."""
 
@@ -105,7 +111,7 @@ def make_train_transform(
                 transform=Compose(
                     [
                         UniformTemporalSubsample(num_frames),
-                        Lambda(lambda x: x / 255.0),
+                        Lambda(uint8_to_float01),
                         Normalize(mean, std),
                         RandomShortSideScale(min_size=256, max_size=320),
                         RandomCrop(resize_to),
@@ -139,7 +145,7 @@ def make_val_transform(
                 transform=Compose(
                     [
                         UniformTemporalSubsample(num_frames),
-                        Lambda(lambda x: x / 255.0),
+                        Lambda(uint8_to_float01),
                         Normalize(mean, std),
                         ShortSideScale(size=height),
                         CenterCrop(resize_to),
