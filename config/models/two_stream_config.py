@@ -19,7 +19,7 @@ class TwoStreamConfig(BaseConfig):
 
     # ── Flow ─────────────────────────────────────────────────────────────────
     flow_root: Path = Path("data/flow")
-    num_flow_frames: int = 10          # L; temporal stream gets 2*L channels
+    num_flow_frames: int = 20         # L; temporal stream gets 2*L channels
 
     # ── Architecture ─────────────────────────────────────────────────────────
     learnable_fusion: bool = True      # learnable vs fixed 0.5/0.5 fusion weight
@@ -32,7 +32,7 @@ class TwoStreamConfig(BaseConfig):
     freeze_strategy: str = "full"
 
     # ── Video sampling ───────────────────────────────────────────────────────
-    clip_duration: float = 2.13        # seconds (matches VideoMAE: 16 frames @ 4 stride / 30 fps)
+    clip_duration: float = 4        # seconds (matches VideoMAE: 16 frames @ 4 stride / 30 fps)
 
     # ── Training hyperparameters ─────────────────────────────────────────────
     num_epochs: int = 20
