@@ -10,11 +10,13 @@ from typing import Any, Dict, Tuple
 
 from model.video_mae.model import build_model as _build_video_mae
 from model.two_stream.model import build_model as _build_two_stream
+from model.vivit.model import build_model as _build_vivit
 
 # Registry maps model_name → callable(**kwargs) → (model, processor)
 MODEL_REGISTRY: Dict[str, Any] = {
     "video_mae": _build_video_mae,
     "two_stream": _build_two_stream,
+    "vivit": _build_vivit,
 }
 
 

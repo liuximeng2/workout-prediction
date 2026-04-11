@@ -19,9 +19,8 @@ import torch
 import evaluate
 from transformers import TrainingArguments, Trainer
 
-from config.models import VideoMAEConfig
+from config.models import VideoMAEConfig, ViViTConfig
 from model import build_model
-from model.video_mae.model import apply_freeze_strategy, get_video_params
 from utils import (
     build_datasets,
     build_label_maps,
@@ -34,7 +33,7 @@ from utils import (
 # ── Registry of available model configs ──────────────────────────────────────
 MODEL_CONFIGS = {
     "video_mae": VideoMAEConfig,
-    # add new models here
+    "vivit": ViViTConfig,
 }
 
 
@@ -44,7 +43,7 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="video_mae",
-        choices=list(MODEL_CONFIGS),
+        choices=sorted(MODEL_CONFIGS),
         help="Which model architecture to use (default: video_mae)",
     )
     parser.add_argument("--batch_size", type=int, default=None)
@@ -114,6 +113,13 @@ def main():
         label2id=label2id,
         id2label=id2label,
     )
+
+    # Import model-specific helpers dynamically
+    if cfg.model_name == "vivit":
+        from model.vivit.model import apply_freeze_strategy, get_video_params
+    else:
+        from model.video_mae.model import apply_freeze_strategy, get_video_params
+
     apply_freeze_strategy(model, cfg.freeze_strategy)
     mean, std, resize_to = get_video_params(image_processor)
 
