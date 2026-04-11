@@ -4,7 +4,7 @@ For a given video file, this script:
   1. Decodes RGB frames from the raw video.
   2. Loads the corresponding pre-computed flow (.npy files).
   3. Renders a side-by-side figure: RGB | flow-magnitude | flow-HSV color wheel.
-  4. Saves to a PNG under analysis/visualization/ (default) or displays interactively.
+  4. Saves to a PDF under analysis/visualization/ (default; vector text, high-DPI rasters) or a path you choose.
   5. Optionally exports an animated GIF cycling through all frames.
 
 Flow is visualized two ways:
@@ -15,7 +15,7 @@ Usage:
     python scripts/visualize_flow.py <path/to/video.mp4>
     python scripts/visualize_flow.py <path/to/video.mp4> --flow_root data/flow
     python scripts/visualize_flow.py <path/to/video.mp4> --num_frames 8 --show
-    python scripts/visualize_flow.py <path/to/video.mp4> --out my_viz.png   # custom path
+    python scripts/visualize_flow.py <path/to/video.mp4> --out my_viz.pdf   # or .png
     python scripts/visualize_flow.py <path/to/video.mp4> --gif
     python scripts/visualize_flow.py "data/reencoded/data_btc_10s/barbell biceps curl/0b43a151-8995-4f7e-8568-45d65996a19c.mp4" --gif --gif_fps 10 --num_frames 30
 """
@@ -31,9 +31,9 @@ import cv2
 import imageio
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 
 from utils.dataset import FLOW_CLIP, flow_dir_for_video
+from utils.visualization import build_flow_grid_figure
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -107,6 +107,12 @@ def find_flow_dir(video_path: Path, flow_root: Path) -> Path:
     return flow_dir_for_video(video_path, flow_root)
 
 
+def _dpi_for_figure_path(out_path: Path) -> int:
+    """PDF (and similar) use higher DPI so embedded panel images stay sharp when zoomed."""
+    ext = out_path.suffix.lower()
+    return 300 if ext == ".pdf" else 120
+
+
 def select_frame_indices(n_rgb: int, n_flow: int, num_frames: int) -> list[int]:
     """Pick num_frames evenly-spaced frame indices valid for both RGB and flow."""
     # flow index i = transition i→i+1, so valid rgb indices are 0..n_flow-1
@@ -134,8 +140,14 @@ def main():
     )
     parser.add_argument(
         "--out", type=Path, default=None,
-        help="Save figure to this path (e.g. viz.png). If omitted, saves to "
-             "analysis/visualization/<video_stem>_flow_viz.png (under the repo root).",
+        help="Save figure to this path (e.g. viz.pdf or viz.png). If omitted, saves to "
+             "analysis/visualization/<video_stem>_flow_viz.pdf (PDF at 300 dpi for raster panels).",
+    )
+    parser.add_argument(
+        "--title",
+        type=str,
+        default="barbell bicep curl",
+        help='Main figure title (default: "barbell bicep curl").',
     )
     parser.add_argument(
         "--show", action="store_false",
@@ -183,72 +195,46 @@ def main():
 
     # Select frame indices
     frame_indices = select_frame_indices(len(rgb_frames), n_flow, args.num_frames)
-    n = len(frame_indices)
 
-    # ── Build figure ──────────────────────────────────────────────────────────
-    # Rows: RGB | Flow magnitude | Flow HSV
-    fig = plt.figure(figsize=(n * 2.5, 3 * 2.8))
-    fig.suptitle(
-        f"{video_path.stem}  —  RGB / Flow magnitude / Flow direction",
-        fontsize=13, fontweight="bold", y=1.01,
-    )
-    gs = gridspec.GridSpec(3, n, figure=fig, hspace=0.08, wspace=0.04)
-
-    row_labels = ["RGB", "Magnitude", "Direction (HSV)"]
-    for col, idx in enumerate(frame_indices):
+    # ── Build figure (compact grid in utils.visualization) ────────────────────
+    column_rgb: list[np.ndarray] = []
+    column_mag: list[np.ndarray | None] = []
+    column_dir: list[np.ndarray | None] = []
+    for idx in frame_indices:
         rgb = rgb_frames[idx]
-
+        column_rgb.append(rgb)
         try:
             flow = load_flow_frame(flow_dir, idx)
         except FileNotFoundError:
             flow = None
+        if flow is not None:
+            column_mag.append(flow_to_magnitude(flow))
+            column_dir.append(flow_to_hsv(flow))
+        else:
+            column_mag.append(None)
+            column_dir.append(None)
 
-        for row in range(3):
-            ax = fig.add_subplot(gs[row, col])
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-            if row == 0:
-                ax.imshow(rgb)
-                if col == 0:
-                    ax.set_ylabel(row_labels[0], fontsize=10, labelpad=4)
-                ax.set_title(f"frame {idx}", fontsize=8)
-
-            elif row == 1:
-                if flow is not None:
-                    mag = flow_to_magnitude(flow)
-                    ax.imshow(mag, cmap="gray", vmin=0, vmax=1)
-                else:
-                    ax.text(0.5, 0.5, "N/A", ha="center", va="center", transform=ax.transAxes)
-                if col == 0:
-                    ax.set_ylabel(row_labels[1], fontsize=10, labelpad=4)
-
-            else:
-                if flow is not None:
-                    hsv_img = flow_to_hsv(flow)
-                    ax.imshow(hsv_img)
-                else:
-                    ax.text(0.5, 0.5, "N/A", ha="center", va="center", transform=ax.transAxes)
-                if col == 0:
-                    ax.set_ylabel(row_labels[2], fontsize=10, labelpad=4)
-
-    # Add a small HSV color wheel legend
-    _add_hsv_legend(fig)
-
-    plt.tight_layout()
+    fig = build_flow_grid_figure(
+        column_rgb,
+        column_mag,
+        column_dir,
+        frame_indices,
+        title=args.title,
+    )
 
     repo_root = Path(__file__).resolve().parent.parent
     out_path = args.out
     if out_path is None:
         vis_dir = repo_root / "analysis" / "visualization"
         vis_dir.mkdir(parents=True, exist_ok=True)
-        out_path = vis_dir / f"{video_path.stem}_flow_viz.png"
+        out_path = vis_dir / f"{video_path.stem}_flow_viz.pdf"
     else:
         out_path = out_path.expanduser()
         if not out_path.is_absolute():
             out_path = (Path.cwd() / out_path).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=120, bbox_inches="tight")
+    dpi = _dpi_for_figure_path(out_path)
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.06, facecolor=fig.get_facecolor())
     print(f"Saved → {out_path}")
 
     if args.gif:
@@ -310,26 +296,6 @@ def export_gif(
 
     imageio.mimsave(out_path, gif_frames, duration=duration, loop=0)
     print(f"GIF saved → {out_path}  ({n_frames} frames, {fps} fps)")
-
-
-def _add_hsv_legend(fig: plt.Figure, size: float = 0.08):
-    """Draw a tiny HSV color wheel in the bottom-right corner as a direction legend."""
-    ax = fig.add_axes([0.92, 0.01, size, size * fig.get_figwidth() / fig.get_figheight()])
-    N = 200
-    y, x = np.mgrid[-1:1:N*1j, -1:1:N*1j]
-    r = np.sqrt(x**2 + y**2)
-    mask = r <= 1.0
-    angle = np.arctan2(y, x)
-    hue = ((angle + np.pi) / (2 * np.pi) * 179).astype(np.uint8)
-    val = np.clip(r * 255, 0, 255).astype(np.uint8)
-    hsv = np.stack([hue, np.full_like(hue, 255), val], axis=-1)
-    rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-    rgb[~mask] = 255   # white outside circle
-    ax.imshow(rgb, origin="upper")
-    ax.set_xticks([]); ax.set_yticks([])
-    ax.set_title("direction", fontsize=6, pad=2)
-    for spine in ax.spines.values():
-        spine.set_visible(False)
 
 
 if __name__ == "__main__":
