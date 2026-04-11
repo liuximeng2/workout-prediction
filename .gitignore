@@ -208,6 +208,7 @@ data/
 checkpoints/**/*.safetensors
 checkpoints/**/pytorch_model.bin
 checkpoints/**/optimizer.pt
+checkpoints/**/*.pt
 
 # GIF visualisations
 *.gif
