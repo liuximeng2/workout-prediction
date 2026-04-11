@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="video_mae",
-        choices=["video_mae", "two_stream"],
+        choices=["video_mae", "two_stream", "vivit"],
         help="Model architecture (default: video_mae).",
     )
     parser.add_argument(
@@ -110,6 +110,86 @@ def eval_video_mae(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
 
     image_processor = VideoMAEImageProcessor.from_pretrained(ckpt)
     model = VideoMAEForVideoClassification.from_pretrained(ckpt)
+    model.eval()
+
+    mean, std, resize_to = get_video_params(image_processor)
+    num_frames = model.config.num_frames
+    clip_duration = num_frames * cfg.sample_rate / cfg.fps
+
+    data_roots = resolve_data_roots(cfg.data_roots, repo_root=repo_root)
+    test_roots = (
+        resolve_data_roots(cfg.test_data_roots, repo_root=repo_root)
+        if cfg.test_data_roots else None
+    )
+    label2id, id2label = build_label_maps(
+        resolve_roots_for_label_maps(cfg.data_roots, cfg.test_data_roots, repo_root=repo_root)
+    )
+    val_transform = make_val_transform(num_frames, resize_to, mean, std)
+    _, _, test_dataset = build_datasets(
+        data_roots=data_roots,
+        label2id=label2id,
+        clip_duration=clip_duration,
+        train_transform=val_transform,
+        val_transform=val_transform,
+        train_split=cfg.train_split,
+        val_split=cfg.val_split,
+        seed=cfg.seed,
+        test_data_roots=test_roots,
+    )
+    print(f"Test videos: {test_dataset.num_videos}")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+
+    positions = _clip_positions(num_clips)
+    n_videos = len(test_dataset)
+    per_video_logits = [[] for _ in range(n_videos)]
+    video_labels = [0] * n_videos
+
+    print(f"Clips/video: {num_clips}  positions: "
+          f"{[f'{p:.2f}' for p in positions]}")
+
+    with torch.no_grad():
+        for clip_idx, pos in enumerate(positions):
+            test_dataset.clip_position = pos
+            loader = DataLoader(test_dataset, batch_size=batch_size,
+                                collate_fn=_video_mae_collate, num_workers=2)
+            vid_offset = 0
+            for batch in loader:
+                outputs = model(pixel_values=batch["pixel_values"].to(device))
+                logits = outputs.logits.cpu()
+                labels = batch["labels"]
+                for i in range(logits.size(0)):
+                    per_video_logits[vid_offset + i].append(logits[i])
+                    video_labels[vid_offset + i] = labels[i].item()
+                vid_offset += logits.size(0)
+            print(f"  clip {clip_idx + 1}/{num_clips} (pos={pos:.2f}) done")
+
+    all_preds, all_labels = _aggregate_clip_logits(per_video_logits, video_labels)
+
+    results = hf_evaluate.load("accuracy").compute(
+        predictions=all_preds, references=all_labels
+    )
+    print(f"\nTest accuracy: {results['accuracy']:.4f}")
+    _print_per_class(all_preds, all_labels, id2label)
+
+
+def eval_vivit(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
+    import evaluate as hf_evaluate
+    from transformers import VivitForVideoClassification, VivitImageProcessor
+
+    from config.models import ViViTConfig
+    from model.vivit.model import get_video_params
+    from utils import (
+        build_datasets,
+        make_val_transform,
+    )
+
+    cfg = ViViTConfig()
+    repo_root = Path(__file__).resolve().parent.parent
+
+    image_processor = VivitImageProcessor.from_pretrained(ckpt)
+    model = VivitForVideoClassification.from_pretrained(ckpt)
     model.eval()
 
     mean, std, resize_to = get_video_params(image_processor)
@@ -316,6 +396,13 @@ def main() -> None:
         print(f"Model      : VideoMAE")
         print(f"Checkpoint : {ckpt}\n")
         eval_video_mae(ckpt, args.batch_size, args.num_clips)
+
+    elif args.model == "vivit":
+        from config.models import ViViTConfig
+        ckpt = args.checkpoint or str(repo_root / ViViTConfig().output_dir)
+        print(f"Model      : ViViT")
+        print(f"Checkpoint : {ckpt}\n")
+        eval_vivit(ckpt, args.batch_size, args.num_clips)
 
     elif args.model == "two_stream":
         from config.models.two_stream_config import TwoStreamConfig
