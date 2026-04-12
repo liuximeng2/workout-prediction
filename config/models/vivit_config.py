@@ -18,7 +18,7 @@ class ViViTConfig(BaseConfig):
     model_ckpt: str = "google/vivit-b-16x2-kinetics400"
 
     # Checkpoint directory (relative to repo root)
-    output_dir: str = "checkpoints/vivit-workout"
+    output_dir: str = "checkpoints/vivit"
 
     # ── Video sampling ───────────────────────────────────────────────────────
     # ViViT (google/vivit-b-16x2-kinetics400) expects 32 frames.
