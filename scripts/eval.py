@@ -6,6 +6,8 @@ Usage:
     # VideoMAE (HuggingFace checkpoint directory)
     python scripts/eval.py --model video_mae --checkpoint checkpoints/videomae
 
+    python scripts/eval.py --model vivit --checkpoint checkpoints/vivit
+
     # Two-Stream CNN (.pt file)
     python scripts/eval.py --model two_stream --checkpoint checkpoints/two-stream-workout/best.pt
 

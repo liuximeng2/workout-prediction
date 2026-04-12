@@ -10,7 +10,6 @@ from utils.dataset import (
 )
 from utils.flow_dataset import TwoStreamDataset
 from utils.transforms import make_train_transform, make_val_transform
-from utils.visualization import display_gif, save_gif
 
 __all__ = [
     "build_datasets",
@@ -25,3 +24,17 @@ __all__ = [
     "display_gif",
     "save_gif",
 ]
+
+
+def __getattr__(name: str):
+    # Import visualization lazily: it pulls in OpenCV, whose wheel bundles libavdevice
+    # and triggers duplicate ObjC class warnings (and possible crashes) alongside PyAV.
+    if name == "display_gif":
+        from utils.visualization import display_gif as _display_gif
+
+        return _display_gif
+    if name == "save_gif":
+        from utils.visualization import save_gif as _save_gif
+
+        return _save_gif
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
