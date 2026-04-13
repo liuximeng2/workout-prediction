@@ -14,6 +14,9 @@ Usage:
     # Multi-clip evaluation (average logits over 5 evenly-spaced clips per video)
     python scripts/eval.py --model two_stream --checkpoint best.pt --num_clips 5
 
+    # Pose MLP (.pt file)
+    python scripts/eval.py --model pose --checkpoint checkpoints/pose/best.pt
+
 Note: This file must not be named ``evaluate.py`` — that name shadows Hugging Face's
 ``evaluate`` package on ``sys.path`` when running ``python scripts/<name>.py``.
 """
