@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="video_mae",
-        choices=["video_mae", "two_stream", "vivit"],
+        choices=["video_mae", "two_stream", "vivit", "pose"],
         help="Model architecture (default: video_mae).",
     )
     parser.add_argument(
@@ -92,6 +92,12 @@ def _video_mae_collate(examples):
     )
     labels = torch.tensor([ex["label"] for ex in examples])
     return {"pixel_values": pixel_values, "labels": labels}
+
+
+def _pose_collate(batch):
+    features = torch.stack([b["features"] for b in batch])
+    labels = torch.tensor([b["label"] for b in batch], dtype=torch.long)
+    return {"features": features, "label": labels}
 
 
 # ── VideoMAE evaluation ───────────────────────────────────────────────────────
@@ -256,6 +262,88 @@ def eval_vivit(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
     _print_per_class(all_preds, all_labels, id2label)
 
 
+# ── Pose MLP evaluation ──────────────────────────────────────────────────────
+
+def eval_pose(ckpt_path: str, batch_size: int) -> None:
+    from config.models.pose_config import PoseConfig
+    from model.pose.model import build_model
+    from utils.pose_dataset import PoseFeatureDataset, filter_valid_pose
+
+    cfg = PoseConfig()
+    repo_root = Path(__file__).resolve().parent.parent
+
+    # ── Load checkpoint ───────────────────────────────────────────────────────
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ckpt = torch.load(ckpt_path, map_location=device)
+
+    label2id: dict = ckpt["label2id"]
+    id2label: dict = ckpt["id2label"]
+    num_classes = len(label2id)
+
+    model, _ = build_model(
+        num_classes=num_classes,
+        hidden_dim=cfg.hidden_dim,
+        num_layers=cfg.num_layers,
+        dropout=cfg.dropout,
+    )
+    model.load_state_dict(ckpt["model"])
+    model.eval().to(device)
+
+    print(f"Loaded epoch {ckpt.get('epoch', '?')} "
+          f"(best val acc in ckpt: {ckpt.get('best_val_acc', float('nan')):.3f})")
+
+    # ── Build test dataset ────────────────────────────────────────────────────
+    data_roots = list(resolve_data_roots(cfg.data_roots, repo_root=repo_root))
+    pose_root = repo_root / cfg.pose_root
+
+    test_paths = None
+    if cfg.test_data_roots:
+        test_roots = list(resolve_data_roots(cfg.test_data_roots, repo_root=repo_root))
+        if test_roots and test_roots[0].is_dir():
+            all_test = _collect_labeled_paths(test_roots, label2id)
+            all_test = filter_valid_pose(all_test, pose_root, repo_root=repo_root)
+            if all_test:
+                test_paths = all_test
+
+    if test_paths is None:
+        all_paths = _collect_labeled_paths(data_roots, label2id)
+        all_paths = filter_valid_pose(all_paths, pose_root, repo_root=repo_root)
+        _, _, test_paths = _split_paths(all_paths, cfg.train_split, cfg.val_split, cfg.seed)
+
+    test_ds = PoseFeatureDataset(
+        labeled_paths=test_paths,
+        pose_root=pose_root,
+        repo_root=repo_root,
+    )
+    print(f"Test samples: {len(test_ds)}")
+
+    loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
+                        num_workers=4, collate_fn=_pose_collate)
+
+    all_preds, all_labels = [], []
+    total_loss = 0.0
+    criterion = nn.CrossEntropyLoss()
+
+    with torch.no_grad():
+        for batch in loader:
+            features = batch["features"].to(device)
+            labels = batch["label"].to(device)
+            logits = model(features)
+            loss = criterion(logits, labels)
+
+            total_loss += loss.item() * labels.size(0)
+            preds = logits.argmax(1).cpu().tolist()
+            all_preds.extend(preds)
+            all_labels.extend(labels.cpu().tolist())
+
+    avg_loss = total_loss / len(all_labels)
+    accuracy = sum(p == l for p, l in zip(all_preds, all_labels)) / len(all_labels)
+
+    print(f"\nTest loss    : {avg_loss:.4f}")
+    print(f"Test accuracy: {accuracy:.4f}")
+    _print_per_class(all_preds, all_labels, id2label)
+
+
 def _two_stream_collate(batch):
     videos = torch.stack([b["video"] for b in batch])
     flows  = torch.stack([b["flow"]  for b in batch])
@@ -413,6 +501,14 @@ def main() -> None:
         print(f"Model      : Two-Stream CNN")
         print(f"Checkpoint : {ckpt}\n")
         eval_two_stream(ckpt, args.batch_size, args.num_clips)
+
+    elif args.model == "pose":
+        from config.models.pose_config import PoseConfig
+        default_ckpt = repo_root / PoseConfig().output_dir / "best.pt"
+        ckpt = args.checkpoint or str(default_ckpt)
+        print(f"Model      : Pose MLP")
+        print(f"Checkpoint : {ckpt}\n")
+        eval_pose(ckpt, args.batch_size)
 
 
 if __name__ == "__main__":
