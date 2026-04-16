@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="video_mae",
-        choices=["video_mae", "two_stream", "vivit", "pose"],
+        choices=["video_mae", "two_stream", "vivit", "pose", "cnn_fusion"],
         help="Model architecture (default: video_mae).",
     )
     parser.add_argument(
@@ -347,6 +347,111 @@ def eval_pose(ckpt_path: str, batch_size: int) -> None:
     _print_per_class(all_preds, all_labels, id2label)
 
 
+def _cnn_fusion_collate(batch):
+    videos = torch.stack([b["video"] for b in batch])  # (B, C, T, H, W)
+    labels = torch.tensor([b["label"] for b in batch], dtype=torch.long)
+    return {"video": videos, "label": labels}
+
+
+# ── CNN Fusion evaluation ─────────────────────────────────────────────────────
+
+def eval_cnn_fusion(ckpt_path: str, batch_size: int, num_clips: int = 1) -> None:
+    from config.models.cnn_fusion_config import CNNFusionConfig
+    from model.cnn_fusion.model import build_model
+    from utils.dataset import VideoClipDataset
+    from utils.transforms import make_val_transform
+
+    _IMAGENET_MEAN = (0.485, 0.456, 0.406)
+    _IMAGENET_STD  = (0.229, 0.224, 0.225)
+    _RESIZE_TO     = (224, 224)
+
+    cfg = CNNFusionConfig()
+    repo_root = Path(__file__).resolve().parent.parent
+
+    # ── Load checkpoint ───────────────────────────────────────────────────────
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ckpt = torch.load(ckpt_path, map_location=device)
+
+    label2id: dict = ckpt["label2id"]
+    id2label: dict = ckpt["id2label"]
+    num_classes = len(label2id)
+
+    model, _ = build_model(
+        num_classes=num_classes,
+        backbone=cfg.backbone,
+        num_frames=cfg.num_frames,
+        aggregation=cfg.aggregation,
+        dropout=cfg.dropout,
+    )
+    model.load_state_dict(ckpt["model"])
+    model.eval().to(device)
+
+    print(f"Loaded epoch {ckpt.get('epoch', '?')} "
+          f"(best val acc in ckpt: {ckpt.get('best_val_acc', float('nan')):.3f})")
+
+    # ── Build test dataset ────────────────────────────────────────────────────
+    data_roots = list(resolve_data_roots(cfg.data_roots, repo_root=repo_root))
+
+    test_paths = None
+    if cfg.test_data_roots:
+        test_roots = list(resolve_data_roots(cfg.test_data_roots, repo_root=repo_root))
+        if test_roots and test_roots[0].is_dir():
+            all_test = _collect_labeled_paths(test_roots, label2id)
+            if all_test:
+                test_paths = all_test
+
+    if test_paths is None:
+        all_paths = _collect_labeled_paths(data_roots, label2id)
+        _, _, test_paths = _split_paths(all_paths, cfg.train_split, cfg.val_split, cfg.seed)
+
+    val_transform = make_val_transform(cfg.num_frames, _RESIZE_TO, _IMAGENET_MEAN, _IMAGENET_STD)
+    test_ds = VideoClipDataset(
+        labeled_paths=test_paths,
+        clip_duration=cfg.clip_duration,
+        transform=val_transform,
+        mode="uniform",
+    )
+    print(f"Test samples: {len(test_ds)}")
+
+    positions = _clip_positions(num_clips)
+    n_videos = len(test_ds)
+    per_video_logits = [[] for _ in range(n_videos)]
+    video_labels = [0] * n_videos
+
+    print(f"Clips/video: {num_clips}  positions: "
+          f"{[f'{p:.2f}' for p in positions]}")
+
+    pin_memory = device.type == "cuda"
+
+    with torch.no_grad():
+        for clip_idx, pos in enumerate(positions):
+            test_ds.clip_position = pos
+            loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
+                                num_workers=4, pin_memory=pin_memory,
+                                collate_fn=_cnn_fusion_collate)
+            vid_offset = 0
+            for batch in loader:
+                video  = batch["video"].to(device)
+                labels = batch["label"]
+                logits = model(video).cpu()
+                for i in range(logits.size(0)):
+                    per_video_logits[vid_offset + i].append(logits[i])
+                    video_labels[vid_offset + i] = labels[i].item()
+                vid_offset += logits.size(0)
+            print(f"  clip {clip_idx + 1}/{num_clips} (pos={pos:.2f}) done")
+
+    all_preds, all_labels = _aggregate_clip_logits(per_video_logits, video_labels)
+
+    avg_logits = torch.stack([torch.stack(v).mean(dim=0) for v in per_video_logits])
+    label_tensor = torch.tensor(all_labels, dtype=torch.long)
+    avg_loss = nn.CrossEntropyLoss()(avg_logits, label_tensor).item()
+    accuracy = sum(p == l for p, l in zip(all_preds, all_labels)) / len(all_labels)
+
+    print(f"\nTest loss    : {avg_loss:.4f}")
+    print(f"Test accuracy: {accuracy:.4f}")
+    _print_per_class(all_preds, all_labels, id2label)
+
+
 def _two_stream_collate(batch):
     videos = torch.stack([b["video"] for b in batch])
     flows  = torch.stack([b["flow"]  for b in batch])
@@ -512,6 +617,14 @@ def main() -> None:
         print(f"Model      : Pose MLP")
         print(f"Checkpoint : {ckpt}\n")
         eval_pose(ckpt, args.batch_size)
+
+    elif args.model == "cnn_fusion":
+        from config.models.cnn_fusion_config import CNNFusionConfig
+        default_ckpt = repo_root / CNNFusionConfig().output_dir / "best.pt"
+        ckpt = args.checkpoint or str(default_ckpt)
+        print(f"Model      : CNN Fusion")
+        print(f"Checkpoint : {ckpt}\n")
+        eval_cnn_fusion(ckpt, args.batch_size, args.num_clips)
 
 
 if __name__ == "__main__":
