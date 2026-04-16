@@ -14,7 +14,7 @@ class CNNFusionConfig(BaseConfig):
 
     # ── Model ────────────────────────────────────────────────────────────────
     model_name: str = "cnn_fusion"
-    output_dir: str = "checkpoints/cnn-fusion-workout"
+    output_dir: str = "checkpoints/cnn-fusion"
 
     # ── Architecture ─────────────────────────────────────────────────────────
     # Backbone CNN: "resnet18", "resnet34", "resnet50", or "resnet101"
