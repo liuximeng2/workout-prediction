@@ -13,14 +13,18 @@ from model.two_stream.model import build_model as _build_two_stream
 from model.vivit.model import build_model as _build_vivit
 from model.pose.model import build_model as _build_pose
 from model.cnn_fusion.model import build_model as _build_cnn_fusion
+from model.qwen3_vl.model import build_model as _build_qwen3_vl
 
 # Registry maps model_name → callable(**kwargs) → (model, processor)
+# Note: qwen3_vl returns (Qwen3VLClassifier, None) — not a torch.nn.Module.
+# Use scripts/eval_qwen3_vl.py for evaluation; no training script exists.
 MODEL_REGISTRY: Dict[str, Any] = {
     "video_mae":  _build_video_mae,
     "two_stream": _build_two_stream,
     "vivit":      _build_vivit,
     "pose":       _build_pose,
     "cnn_fusion": _build_cnn_fusion,
+    "qwen3_vl":   _build_qwen3_vl,
 }
 
 
