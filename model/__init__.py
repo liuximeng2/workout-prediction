@@ -16,8 +16,11 @@ from model.cnn_fusion.model import build_model as _build_cnn_fusion
 from model.llava_onevision.model import build_model as _build_llava_onevision
 from model.video_salmonn.model import build_model as _build_video_salmonn
 from model.videoprism.model import build_model as _build_videoprism
+from model.qwen3_vl.model import build_model as _build_qwen3_vl
 
 # Registry maps model_name → callable(**kwargs) → (model, processor)
+# Note: qwen3_vl returns (Qwen3VLClassifier, None) — not a torch.nn.Module.
+# Use scripts/eval_qwen3_vl.py for evaluation; no training script exists.
 MODEL_REGISTRY: Dict[str, Any] = {
     "video_mae":       _build_video_mae,
     "two_stream":      _build_two_stream,
@@ -27,6 +30,7 @@ MODEL_REGISTRY: Dict[str, Any] = {
     "llava_onevision": _build_llava_onevision,
     "video_salmonn":   _build_video_salmonn,
     "videoprism":      _build_videoprism,
+    "qwen3_vl":        _build_qwen3_vl,
 }
 
 
