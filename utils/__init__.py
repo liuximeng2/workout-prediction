@@ -11,6 +11,7 @@ from utils.dataset import (
 from utils.flow_dataset import TwoStreamDataset
 from utils.splits import canonical_splits, filter_split
 from utils.transforms import make_train_transform, make_val_transform
+from utils.embedding_dataset import EmbeddingDataset
 
 __all__ = [
     "build_datasets",
@@ -24,6 +25,7 @@ __all__ = [
     "TwoStreamDataset",
     "make_train_transform",
     "make_val_transform",
+    "EmbeddingDataset",
     "display_gif",
     "save_gif",
 ]

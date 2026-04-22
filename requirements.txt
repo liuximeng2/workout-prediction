@@ -18,6 +18,8 @@ urllib3==2.6.3
 # ── Deep learning core ────────────────────────────────────────────────────────
 torch==2.11.0+cu128
 torchvision==0.26.0+cu128
+safetensors>=0.4.0
+huggingface_hub>=0.23.0
 
 # ── VideoMAE / HuggingFace ────────────────────────────────────────────────────
 transformers==5.5.0

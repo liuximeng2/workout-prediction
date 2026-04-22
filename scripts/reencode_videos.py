@@ -1,3 +1,6 @@
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+
 """Re-encode workout videos to a lower resolution and frame rate.
 
 Walks every ``data_roots`` directory defined in BaseConfig, re-encodes each

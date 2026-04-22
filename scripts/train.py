@@ -19,7 +19,7 @@ import torch
 import evaluate
 from transformers import TrainingArguments, Trainer
 
-from config.models import VideoMAEConfig, ViViTConfig
+from config.models import VideoMAEConfig, ViViTConfig, LlavaOnevisionConfig, VideoSalmonnConfig, VideoPrismConfig
 from model import build_model
 from utils import (
     build_datasets,
@@ -29,11 +29,16 @@ from utils import (
     resolve_data_roots,
     resolve_roots_for_label_maps,
 )
+from utils.dataset import _collect_labeled_paths, _split_paths
+from utils.embedding_dataset import EmbeddingDataset
 
 # ── Registry of available model configs ──────────────────────────────────────
 MODEL_CONFIGS = {
-    "video_mae": VideoMAEConfig,
-    "vivit": ViViTConfig,
+    "video_mae":       VideoMAEConfig,
+    "vivit":           ViViTConfig,
+    "llava_onevision": LlavaOnevisionConfig,
+    "video_salmonn":   VideoSalmonnConfig,
+    "videoprism":      VideoPrismConfig,
 }
 
 
@@ -59,6 +64,14 @@ def parse_args() -> argparse.Namespace:
         choices=["full", "head_only"],
         help="Parameter freeze strategy (default: from model config)",
     )
+    parser.add_argument(
+        "--text_conditioned",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use text-conditioned embedding cache. "
+             "Defaults to True for llava_onevision, False for video_salmonn. "
+             "Use --no_text_conditioned to override.",
+    )
     return parser.parse_args()
 
 
@@ -76,6 +89,68 @@ def collate_fn(examples):
     )
     labels = torch.tensor([example["label"] for example in examples])
     return {"pixel_values": pixel_values, "labels": labels}
+
+
+def _embedding_collate_fn(examples):
+    """Collate pre-computed embeddings — no video decode or model forward needed."""
+    return {
+        "embedding": torch.stack([e["embedding"] for e in examples]),
+        "labels": torch.tensor([e["label"] for e in examples]),
+    }
+
+
+def make_llava_collate_fn(processor):
+    """Return a collate_fn that also encodes a text prompt for LLaVA-OneVision."""
+    import numpy as np
+    from PIL import Image
+
+    # LLaVA-OneVision chat template: wrap the prompt with the image token.
+    conversation = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "video"},
+                {"type": "text", "text": "Classify the exercise being performed."},
+            ],
+        }
+    ]
+    prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
+
+    def _collate(examples):
+        labels = torch.tensor([example["label"] for example in examples])
+
+        # Convert each clip's frames to a list of PIL Images (one clip = one video).
+        # processor expects: text=str, videos=list[list[PIL.Image]]
+        videos = []
+        for example in examples:
+            video = example["video"]  # (C, T, H, W)
+            frames = [
+                Image.fromarray(
+                    (video[:, t].permute(1, 2, 0).numpy() * 255)
+                    .clip(0, 255)
+                    .astype(np.uint8)
+                )
+                for t in range(video.shape[1])
+            ]
+            videos.append(frames)
+
+        # Use the full processor so it returns pixel_values AND image_sizes.
+        enc = processor(
+            text=[prompt] * len(examples),
+            videos=videos,
+            return_tensors="pt",
+            padding=True,
+        )
+
+        return {
+            "pixel_values_videos": enc["pixel_values_videos"],
+            "image_sizes": enc.get("image_sizes"),
+            "input_ids": enc["input_ids"],
+            "attention_mask": enc["attention_mask"],
+            "labels": labels,
+        }
+
+    return _collate
 
 
 def main():
@@ -97,6 +172,8 @@ def main():
         cfg = replace(cfg, push_to_hub=True)
     if args.freeze_strategy is not None:
         cfg = replace(cfg, freeze_strategy=args.freeze_strategy)
+    if args.text_conditioned is not None:
+        cfg = replace(cfg, text_conditioned=args.text_conditioned)
 
     data_roots = resolve_data_roots(cfg.data_roots)
 
@@ -106,41 +183,109 @@ def main():
     )
     print(f"Classes ({len(label2id)}): {list(label2id.keys())}")
 
-    # ── Model & processor ─────────────────────────────────────────────────────
-    model, image_processor = build_model(
-        cfg.model_name,
-        model_ckpt=cfg.model_ckpt,
-        label2id=label2id,
-        id2label=id2label,
-    )
+    # ── Datasets (decide early so we can skip model load when cached) ─────────
+    repo_root = Path(__file__).resolve().parent.parent
 
-    # Import model-specific helpers dynamically
-    if cfg.model_name == "vivit":
-        from model.vivit.model import apply_freeze_strategy, get_video_params
+    def _cache_dir_for(model_name: str, text_conditioned: bool) -> Path:
+        if model_name == "llava_onevision":
+            return repo_root / "data" / ("llava_embeddings" if text_conditioned else "llava_embeddings_notxt")
+        if model_name == "video_salmonn":
+            return repo_root / "data" / ("salmonn_embeddings_text" if text_conditioned else "salmonn_embeddings")
+        if model_name == "videoprism":
+            return repo_root / "data" / "videoprism_embeddings"
+        return None
+
+    videoprism_cache_dir = repo_root / "data" / "videoprism_embeddings"
+
+    if cfg.model_name == "llava_onevision":
+        candidate = _cache_dir_for("llava_onevision", cfg.text_conditioned)
+        embedding_cache_dir = candidate if candidate.is_dir() else None
+    elif cfg.model_name == "video_salmonn":
+        candidate = _cache_dir_for("video_salmonn", cfg.text_conditioned)
+        if not candidate.is_dir():
+            script = ("precompute_salmonn_embeddings.py --text_conditioned"
+                      if cfg.text_conditioned else "precompute_salmonn_embeddings.py")
+            raise RuntimeError(
+                f"Embedding cache not found at {candidate}. "
+                f"Run scripts/{script} first."
+            )
+        embedding_cache_dir = candidate
+    elif cfg.model_name == "videoprism":
+        if not videoprism_cache_dir.is_dir():
+            raise RuntimeError(
+                f"Embedding cache not found at {videoprism_cache_dir}. "
+                "Run scripts/precompute_videoprism_embeddings.py first."
+            )
+        embedding_cache_dir = videoprism_cache_dir
     else:
-        from model.video_mae.model import apply_freeze_strategy, get_video_params
+        embedding_cache_dir = None
 
-    apply_freeze_strategy(model, cfg.freeze_strategy)
-    mean, std, resize_to = get_video_params(image_processor)
+    use_embedding_cache = embedding_cache_dir is not None
 
-    num_frames = model.config.num_frames
-    clip_duration = num_frames * cfg.sample_rate / cfg.fps
-    print(f"num_frames={num_frames}, clip_duration={clip_duration:.2f}s")
+    # ── Model & processor ─────────────────────────────────────────────────────
+    if use_embedding_cache:
+        if cfg.model_name == "llava_onevision":
+            from model.llava_onevision.model import build_model_cached
+        elif cfg.model_name == "video_salmonn":
+            from model.video_salmonn.model import build_model_cached
+        else:
+            from model.videoprism.model import build_model_cached
+        model, image_processor = build_model_cached(label2id)
+    else:
+        model, image_processor = build_model(
+            cfg.model_name,
+            model_ckpt=cfg.model_ckpt,
+            label2id=label2id,
+            id2label=id2label,
+        )
 
-    # ── Datasets ──────────────────────────────────────────────────────────────
-    train_transform = make_train_transform(num_frames, resize_to, mean, std)
-    val_transform = make_val_transform(num_frames, resize_to, mean, std)
+        # Import model-specific helpers dynamically
+        if cfg.model_name == "vivit":
+            from model.vivit.model import apply_freeze_strategy, get_video_params
+        elif cfg.model_name == "llava_onevision":
+            from model.llava_onevision.model import apply_freeze_strategy, get_video_params
+        else:
+            from model.video_mae.model import apply_freeze_strategy, get_video_params
 
-    train_dataset, val_dataset, _ = build_datasets(
-        data_roots=data_roots,
-        label2id=label2id,
-        clip_duration=clip_duration,
-        train_transform=train_transform,
-        val_transform=val_transform,
-        train_split=cfg.train_split,
-        val_split=cfg.val_split,
-        seed=cfg.seed,
-    )
+        apply_freeze_strategy(model, cfg.freeze_strategy)
+        mean, std, resize_to = get_video_params(image_processor)
+
+        if cfg.model_name == "llava_onevision":
+            num_frames = cfg.num_frames
+        else:
+            num_frames = model.config.num_frames
+        clip_duration = num_frames * cfg.sample_rate / cfg.fps
+        print(f"num_frames={num_frames}, clip_duration={clip_duration:.2f}s")
+
+    # ── Build datasets ────────────────────────────────────────────────────────
+    if use_embedding_cache:
+        print(f"Using cached embeddings from {embedding_cache_dir}")
+        all_paths = _collect_labeled_paths(data_roots, label2id)
+        train_paths, val_paths, _ = _split_paths(
+            all_paths, cfg.train_split, cfg.val_split, cfg.seed
+        )
+        train_dataset = EmbeddingDataset(train_paths, embedding_cache_dir)
+        val_dataset = EmbeddingDataset(val_paths, embedding_cache_dir)
+        data_collator = _embedding_collate_fn
+    else:
+        train_transform = make_train_transform(num_frames, resize_to, mean, std)
+        val_transform = make_val_transform(num_frames, resize_to, mean, std)
+
+        train_dataset, val_dataset, _ = build_datasets(
+            data_roots=data_roots,
+            label2id=label2id,
+            clip_duration=clip_duration,
+            train_transform=train_transform,
+            val_transform=val_transform,
+            train_split=cfg.train_split,
+            val_split=cfg.val_split,
+            seed=cfg.seed,
+        )
+        if cfg.model_name == "llava_onevision":
+            data_collator = make_llava_collate_fn(image_processor)
+        else:
+            data_collator = collate_fn
+
     print(
         f"Dataset sizes — train: {train_dataset.num_videos}, "
         f"val: {val_dataset.num_videos}"
@@ -183,7 +328,7 @@ def main():
         eval_dataset=val_dataset,
         processing_class=image_processor,
         compute_metrics=compute_metrics,
-        data_collator=collate_fn,
+        data_collator=data_collator,
     )
 
     # ── Train ─────────────────────────────────────────────────────────────────
