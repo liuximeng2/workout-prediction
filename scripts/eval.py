@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="video_mae",
-        choices=["video_mae", "two_stream", "vivit", "pose", "cnn_fusion"],
+        choices=["video_mae", "two_stream", "vivit", "pose", "cnn_fusion", "llava_onevision", "video_salmonn", "videoprism"],
         help="Model architecture (default: video_mae).",
     )
     parser.add_argument(
@@ -66,7 +66,28 @@ def parse_args() -> argparse.Namespace:
         help="Number of evenly-spaced clips to sample per video. "
              "Logits are averaged across clips before prediction (default: 1 = center clip only).",
     )
+    parser.add_argument(
+        "--split",
+        type=str,
+        default="test",
+        choices=["train", "val", "test"],
+        help="Which data split to evaluate (default: test).",
+    )
+    parser.add_argument(
+        "--text_conditioned",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use text-conditioned embedding cache. "
+             "Defaults to True for llava_onevision, False for video_salmonn. "
+             "Use --no_text_conditioned to evaluate the no-text variant.",
+    )
     return parser.parse_args()
+
+
+def _select_split(all_paths, split, train_split, val_split, seed):
+    """Return the labeled paths for the requested split."""
+    train_paths, val_paths, test_paths = _split_paths(all_paths, train_split, val_split, seed)
+    return {"train": train_paths, "val": val_paths, "test": test_paths}[split]
 
 
 def _clip_positions(num_clips: int) -> list:
@@ -105,7 +126,7 @@ def _pose_collate(batch):
 
 # ── VideoMAE evaluation ───────────────────────────────────────────────────────
 
-def eval_video_mae(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
+def eval_video_mae(ckpt: str, batch_size: int, num_clips: int = 1, split: str = "test") -> None:
     import evaluate as hf_evaluate
     from transformers import VideoMAEForVideoClassification, VideoMAEImageProcessor
 
@@ -136,7 +157,7 @@ def eval_video_mae(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
         resolve_roots_for_label_maps(cfg.data_roots, cfg.test_data_roots, repo_root=repo_root)
     )
     val_transform = make_val_transform(num_frames, resize_to, mean, std)
-    _, _, test_dataset = build_datasets(
+    datasets = build_datasets(
         data_roots=data_roots,
         label2id=label2id,
         clip_duration=clip_duration,
@@ -147,13 +168,14 @@ def eval_video_mae(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
         seed=cfg.seed,
         test_data_roots=test_roots,
     )
-    print(f"Test videos: {test_dataset.num_videos}")
+    split_dataset = {"train": datasets[0], "val": datasets[1], "test": datasets[2]}[split]
+    print(f"{split.capitalize()} videos: {split_dataset.num_videos}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
 
     positions = _clip_positions(num_clips)
-    n_videos = len(test_dataset)
+    n_videos = len(split_dataset)
     per_video_logits = [[] for _ in range(n_videos)]
     video_labels = [0] * n_videos
 
@@ -162,8 +184,8 @@ def eval_video_mae(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
 
     with torch.no_grad():
         for clip_idx, pos in enumerate(positions):
-            test_dataset.clip_position = pos
-            loader = DataLoader(test_dataset, batch_size=batch_size,
+            split_dataset.clip_position = pos
+            loader = DataLoader(split_dataset, batch_size=batch_size,
                                 collate_fn=_video_mae_collate, num_workers=2)
             vid_offset = 0
             for batch in loader:
@@ -181,11 +203,11 @@ def eval_video_mae(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
     results = hf_evaluate.load("accuracy").compute(
         predictions=all_preds, references=all_labels
     )
-    print(f"\nTest accuracy: {results['accuracy']:.4f}")
+    print(f"\n{split.capitalize()} accuracy: {results['accuracy']:.4f}")
     _print_per_class(all_preds, all_labels, id2label)
 
 
-def eval_vivit(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
+def eval_vivit(ckpt: str, batch_size: int, num_clips: int = 1, split: str = "test") -> None:
     import evaluate as hf_evaluate
     from transformers import VivitForVideoClassification, VivitImageProcessor
 
@@ -216,7 +238,7 @@ def eval_vivit(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
         resolve_roots_for_label_maps(cfg.data_roots, cfg.test_data_roots, repo_root=repo_root)
     )
     val_transform = make_val_transform(num_frames, resize_to, mean, std)
-    _, _, test_dataset = build_datasets(
+    datasets = build_datasets(
         data_roots=data_roots,
         label2id=label2id,
         clip_duration=clip_duration,
@@ -227,13 +249,14 @@ def eval_vivit(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
         seed=cfg.seed,
         test_data_roots=test_roots,
     )
-    print(f"Test videos: {test_dataset.num_videos}")
+    split_dataset = {"train": datasets[0], "val": datasets[1], "test": datasets[2]}[split]
+    print(f"{split.capitalize()} videos: {split_dataset.num_videos}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
 
     positions = _clip_positions(num_clips)
-    n_videos = len(test_dataset)
+    n_videos = len(split_dataset)
     per_video_logits = [[] for _ in range(n_videos)]
     video_labels = [0] * n_videos
 
@@ -242,8 +265,8 @@ def eval_vivit(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
 
     with torch.no_grad():
         for clip_idx, pos in enumerate(positions):
-            test_dataset.clip_position = pos
-            loader = DataLoader(test_dataset, batch_size=batch_size,
+            split_dataset.clip_position = pos
+            loader = DataLoader(split_dataset, batch_size=batch_size,
                                 collate_fn=_video_mae_collate, num_workers=2)
             vid_offset = 0
             for batch in loader:
@@ -261,13 +284,13 @@ def eval_vivit(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
     results = hf_evaluate.load("accuracy").compute(
         predictions=all_preds, references=all_labels
     )
-    print(f"\nTest accuracy: {results['accuracy']:.4f}")
+    print(f"\n{split.capitalize()} accuracy: {results['accuracy']:.4f}")
     _print_per_class(all_preds, all_labels, id2label)
 
 
 # ── Pose MLP evaluation ──────────────────────────────────────────────────────
 
-def eval_pose(ckpt_path: str, batch_size: int) -> None:
+def eval_pose(ckpt_path: str, batch_size: int, split: str = "test") -> None:
     from config.models.pose_config import PoseConfig
     from model.pose.model import build_model
     from utils.pose_dataset import PoseFeatureDataset, filter_valid_pose
@@ -299,26 +322,26 @@ def eval_pose(ckpt_path: str, batch_size: int) -> None:
     data_roots = list(resolve_data_roots(cfg.data_roots, repo_root=repo_root))
     pose_root = repo_root / cfg.pose_root
 
-    test_paths = None
-    if cfg.test_data_roots:
+    eval_paths = None
+    if split == "test" and cfg.test_data_roots:
         test_roots = list(resolve_data_roots(cfg.test_data_roots, repo_root=repo_root))
         if test_roots and test_roots[0].is_dir():
             all_test = _collect_labeled_paths(test_roots, label2id)
             all_test = filter_valid_pose(all_test, pose_root, repo_root=repo_root)
             if all_test:
-                test_paths = all_test
+                eval_paths = all_test
 
-    if test_paths is None:
+    if eval_paths is None:
         all_paths = _collect_labeled_paths(data_roots, label2id)
         all_paths = filter_valid_pose(all_paths, pose_root, repo_root=repo_root)
-        _, _, test_paths = _split_paths(all_paths, cfg.train_split, cfg.val_split, cfg.seed)
+        eval_paths = _select_split(all_paths, split, cfg.train_split, cfg.val_split, cfg.seed)
 
     test_ds = PoseFeatureDataset(
-        labeled_paths=test_paths,
+        labeled_paths=eval_paths,
         pose_root=pose_root,
         repo_root=repo_root,
     )
-    print(f"Test samples: {len(test_ds)}")
+    print(f"{split.capitalize()} samples: {len(test_ds)}")
 
     loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
                         num_workers=4, collate_fn=_pose_collate)
@@ -355,7 +378,7 @@ def _cnn_fusion_collate(batch):
 
 # ── CNN Fusion evaluation ─────────────────────────────────────────────────────
 
-def eval_cnn_fusion(ckpt_path: str, batch_size: int, num_clips: int = 1) -> None:
+def eval_cnn_fusion(ckpt_path: str, batch_size: int, num_clips: int = 1, split: str = "test") -> None:
     from config.models.cnn_fusion_config import CNNFusionConfig
     from model.cnn_fusion.model import build_model
     from utils.dataset import VideoClipDataset
@@ -392,26 +415,26 @@ def eval_cnn_fusion(ckpt_path: str, batch_size: int, num_clips: int = 1) -> None
     # ── Build test dataset ────────────────────────────────────────────────────
     data_roots = list(resolve_data_roots(cfg.data_roots, repo_root=repo_root))
 
-    test_paths = None
-    if cfg.test_data_roots:
+    eval_paths = None
+    if split == "test" and cfg.test_data_roots:
         test_roots = list(resolve_data_roots(cfg.test_data_roots, repo_root=repo_root))
         if test_roots and test_roots[0].is_dir():
             all_test = _collect_labeled_paths(test_roots, label2id)
             if all_test:
-                test_paths = all_test
+                eval_paths = all_test
 
-    if test_paths is None:
+    if eval_paths is None:
         all_paths = _collect_labeled_paths(data_roots, label2id)
-        _, _, test_paths = _split_paths(all_paths, cfg.train_split, cfg.val_split, cfg.seed)
+        eval_paths = _select_split(all_paths, split, cfg.train_split, cfg.val_split, cfg.seed)
 
     val_transform = make_val_transform(cfg.num_frames, _RESIZE_TO, _IMAGENET_MEAN, _IMAGENET_STD)
     test_ds = VideoClipDataset(
-        labeled_paths=test_paths,
+        labeled_paths=eval_paths,
         clip_duration=cfg.clip_duration,
         transform=val_transform,
         mode="uniform",
     )
-    print(f"Test samples: {len(test_ds)}")
+    print(f"{split.capitalize()} samples: {len(test_ds)}")
 
     positions = _clip_positions(num_clips)
     n_videos = len(test_ds)
@@ -452,6 +475,13 @@ def eval_cnn_fusion(ckpt_path: str, batch_size: int, num_clips: int = 1) -> None
     _print_per_class(all_preds, all_labels, id2label)
 
 
+def _embedding_collate(examples):
+    return {
+        "embedding": torch.stack([e["embedding"] for e in examples]),
+        "labels": torch.tensor([e["label"] for e in examples]),
+    }
+
+
 def _two_stream_collate(batch):
     videos = torch.stack([b["video"] for b in batch])
     flows  = torch.stack([b["flow"]  for b in batch])
@@ -461,7 +491,7 @@ def _two_stream_collate(batch):
 
 # ── Two-Stream evaluation ─────────────────────────────────────────────────────
 
-def eval_two_stream(ckpt_path: str, batch_size: int, num_clips: int = 1) -> None:
+def eval_two_stream(ckpt_path: str, batch_size: int, num_clips: int = 1, split: str = "test") -> None:
     from config.models.two_stream_config import TwoStreamConfig
     from model.two_stream.model import build_model
     from utils.flow_dataset import TwoStreamDataset
@@ -492,30 +522,29 @@ def eval_two_stream(ckpt_path: str, batch_size: int, num_clips: int = 1) -> None
     data_roots = list(resolve_data_roots(cfg.data_roots, repo_root=repo_root))
     flow_root = repo_root / cfg.flow_root
 
-    # Use explicit test root if present, else fall back to stratified split
-    test_paths = None
-    if cfg.test_data_roots:
+    eval_paths = None
+    if split == "test" and cfg.test_data_roots:
         test_roots = list(resolve_data_roots(cfg.test_data_roots, repo_root=repo_root))
         if test_roots and test_roots[0].is_dir():
             all_test = _collect_labeled_paths(test_roots, label2id)
             all_test = filter_valid_flow(all_test, flow_root, repo_root=repo_root)
             if all_test:
-                test_paths = all_test
+                eval_paths = all_test
 
-    if test_paths is None:
+    if eval_paths is None:
         all_paths = _collect_labeled_paths(data_roots, label2id)
         all_paths = filter_valid_flow(all_paths, flow_root, repo_root=repo_root)
-        _, _, test_paths = _split_paths(all_paths, cfg.train_split, cfg.val_split, cfg.seed)
+        eval_paths = _select_split(all_paths, split, cfg.train_split, cfg.val_split, cfg.seed)
 
     test_ds = TwoStreamDataset(
-        labeled_paths=test_paths,
+        labeled_paths=eval_paths,
         flow_root=flow_root,
         clip_duration=cfg.clip_duration,
         num_flow_frames=cfg.num_flow_frames,
         mode="val",
         repo_root=repo_root,
     )
-    print(f"Test samples: {len(test_ds)}")
+    print(f"{split.capitalize()} samples: {len(test_ds)}")
 
     positions = _clip_positions(num_clips)
     n_videos = len(test_ds)
@@ -560,6 +589,189 @@ def eval_two_stream(ckpt_path: str, batch_size: int, num_clips: int = 1) -> None
     _print_per_class(all_preds, all_labels, id2label)
 
 
+# ── LLaVA-OneVision evaluation (cached embeddings) ───────────────────────────
+
+def eval_llava_onevision(ckpt_path: str, batch_size: int, split: str = "test",
+                         text_conditioned: bool = True) -> None:
+    from config.models import LlavaOnevisionConfig
+    from model.llava_onevision.model import LlavaOnevisionHeadOnly
+    from utils.embedding_dataset import EmbeddingDataset
+
+    cfg = LlavaOnevisionConfig()
+    repo_root = Path(__file__).resolve().parent.parent
+    cache_dir = repo_root / "data" / ("llava_embeddings" if text_conditioned else "llava_embeddings_notxt")
+
+    if not cache_dir.is_dir():
+        precompute_cmd = ("precompute_llava_embeddings.py" if text_conditioned
+                          else "precompute_llava_embeddings.py --no_text_conditioned")
+        raise RuntimeError(
+            f"Embedding cache not found at {cache_dir}. "
+            f"Run scripts/{precompute_cmd} first."
+        )
+
+    label2id, id2label = build_label_maps(
+        resolve_roots_for_label_maps(cfg.data_roots, cfg.test_data_roots, repo_root=repo_root)
+    )
+    data_roots = resolve_data_roots(cfg.data_roots, repo_root=repo_root)
+    all_paths = _collect_labeled_paths(data_roots, label2id)
+    eval_paths = _select_split(all_paths, split, cfg.train_split, cfg.val_split, cfg.seed)
+
+    test_ds = EmbeddingDataset(eval_paths, cache_dir)
+    print(f"{split.capitalize()} videos: {test_ds.num_videos}")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    from safetensors.torch import load_file
+    state_dict = load_file(ckpt_path, device=str(device))
+
+    model = LlavaOnevisionHeadOnly(num_labels=len(label2id))
+    model.load_state_dict(state_dict)
+    model.eval().to(device)
+
+    loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
+                        collate_fn=_embedding_collate, num_workers=2)
+
+    all_preds, all_labels = [], []
+    total_loss = 0.0
+    criterion = nn.CrossEntropyLoss()
+
+    with torch.no_grad():
+        for batch in loader:
+            emb = batch["embedding"].to(device)
+            labels = batch["labels"].to(device)
+            logits = model(emb).float()
+            total_loss += criterion(logits, labels).item() * labels.size(0)
+            all_preds.extend(logits.argmax(1).cpu().tolist())
+            all_labels.extend(labels.cpu().tolist())
+
+    accuracy = sum(p == l for p, l in zip(all_preds, all_labels)) / len(all_labels)
+    avg_loss = total_loss / len(all_labels)
+    print(f"\nTest loss    : {avg_loss:.4f}")
+    print(f"Test accuracy: {accuracy:.4f}")
+    _print_per_class(all_preds, all_labels, id2label)
+
+
+# ── video-SALMONN-2 evaluation (cached embeddings) ───────────────────────────
+
+def eval_video_salmonn(ckpt_path: str, batch_size: int, split: str = "test",
+                       text_conditioned: bool = False) -> None:
+    from config.models.video_salmonn_config import VideoSalmonnConfig
+    from model.video_salmonn.model import VideoSalmonnHeadOnly
+    from utils.embedding_dataset import EmbeddingDataset
+
+    cfg = VideoSalmonnConfig()
+    repo_root = Path(__file__).resolve().parent.parent
+    cache_dir = repo_root / "data" / ("salmonn_embeddings_text" if text_conditioned else "salmonn_embeddings")
+
+    if not cache_dir.is_dir():
+        precompute_cmd = ("precompute_salmonn_embeddings.py --text_conditioned" if text_conditioned
+                          else "precompute_salmonn_embeddings.py")
+        raise RuntimeError(
+            f"Embedding cache not found at {cache_dir}. "
+            f"Run scripts/{precompute_cmd} first."
+        )
+
+    label2id, id2label = build_label_maps(
+        resolve_roots_for_label_maps(cfg.data_roots, cfg.test_data_roots, repo_root=repo_root)
+    )
+    data_roots = resolve_data_roots(cfg.data_roots, repo_root=repo_root)
+    all_paths = _collect_labeled_paths(data_roots, label2id)
+    eval_paths = _select_split(all_paths, split, cfg.train_split, cfg.val_split, cfg.seed)
+
+    test_ds = EmbeddingDataset(eval_paths, cache_dir)
+    print(f"{split.capitalize()} videos: {test_ds.num_videos}")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    from safetensors.torch import load_file
+    state_dict = load_file(ckpt_path, device=str(device))
+
+    model = VideoSalmonnHeadOnly(num_labels=len(label2id))
+    model.load_state_dict(state_dict)
+    model.eval().to(device)
+
+    loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
+                        collate_fn=_embedding_collate, num_workers=2)
+
+    all_preds, all_labels = [], []
+    total_loss = 0.0
+    criterion = nn.CrossEntropyLoss()
+
+    with torch.no_grad():
+        for batch in loader:
+            emb = batch["embedding"].to(device)
+            labels = batch["labels"].to(device)
+            logits = model(emb).float()
+            total_loss += criterion(logits, labels).item() * labels.size(0)
+            all_preds.extend(logits.argmax(1).cpu().tolist())
+            all_labels.extend(labels.cpu().tolist())
+
+    accuracy = sum(p == l for p, l in zip(all_preds, all_labels)) / len(all_labels)
+    avg_loss = total_loss / len(all_labels)
+    print(f"\nTest loss    : {avg_loss:.4f}")
+    print(f"Test accuracy: {accuracy:.4f}")
+    _print_per_class(all_preds, all_labels, id2label)
+
+
+# ── VideoPrism evaluation (cached embeddings) ────────────────────────────────
+
+def eval_videoprism(ckpt_path: str, batch_size: int, split: str = "test") -> None:
+    from config.models.videoprism_config import VideoPrismConfig
+    from model.videoprism.model import VideoPrismHeadOnly
+    from utils.embedding_dataset import EmbeddingDataset
+
+    cfg = VideoPrismConfig()
+    repo_root = Path(__file__).resolve().parent.parent
+    cache_dir = repo_root / "data" / "videoprism_embeddings"
+
+    if not cache_dir.is_dir():
+        raise RuntimeError(
+            f"Embedding cache not found at {cache_dir}. "
+            "Run scripts/precompute_videoprism_embeddings.py first."
+        )
+
+    label2id, id2label = build_label_maps(
+        resolve_roots_for_label_maps(cfg.data_roots, cfg.test_data_roots, repo_root=repo_root)
+    )
+    data_roots = resolve_data_roots(cfg.data_roots, repo_root=repo_root)
+    all_paths = _collect_labeled_paths(data_roots, label2id)
+    eval_paths = _select_split(all_paths, split, cfg.train_split, cfg.val_split, cfg.seed)
+
+    test_ds = EmbeddingDataset(eval_paths, cache_dir)
+    print(f"{split.capitalize()} videos: {test_ds.num_videos}")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    from safetensors.torch import load_file
+    state_dict = load_file(ckpt_path, device=str(device))
+
+    model = VideoPrismHeadOnly(num_labels=len(label2id))
+    model.load_state_dict(state_dict)
+    model.eval().to(device)
+
+    loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
+                        collate_fn=_embedding_collate, num_workers=2)
+
+    all_preds, all_labels = [], []
+    total_loss = 0.0
+    criterion = nn.CrossEntropyLoss()
+
+    with torch.no_grad():
+        for batch in loader:
+            emb = batch["embedding"].to(device)
+            labels = batch["labels"].to(device)
+            logits = model(emb).float()
+            total_loss += criterion(logits, labels).item() * labels.size(0)
+            all_preds.extend(logits.argmax(1).cpu().tolist())
+            all_labels.extend(labels.cpu().tolist())
+
+    accuracy = sum(p == l for p, l in zip(all_preds, all_labels)) / len(all_labels)
+    avg_loss = total_loss / len(all_labels)
+    print(f"\nTest loss    : {avg_loss:.4f}")
+    print(f"Test accuracy: {accuracy:.4f}")
+    _print_per_class(all_preds, all_labels, id2label)
+
+
 # ── Shared per-class printer ──────────────────────────────────────────────────
 
 def _print_per_class(
@@ -567,6 +779,8 @@ def _print_per_class(
     labels: list,
     id2label: dict,
 ) -> None:
+    from sklearn.metrics import f1_score
+
     class_correct: dict = defaultdict(int)
     class_total:   dict = defaultdict(int)
     for pred, label in zip(preds, labels):
@@ -580,6 +794,9 @@ def _print_per_class(
         acc = class_correct[cls] / class_total[cls]
         print(f"  {cls:<32s}  {acc:.2%}  ({class_correct[cls]}/{class_total[cls]})")
 
+    print(f"\nF1 macro:    {f1_score(labels, preds, average='macro',    zero_division=0):.4f}")
+    print(f"F1 weighted: {f1_score(labels, preds, average='weighted', zero_division=0):.4f}")
+
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -588,19 +805,21 @@ def main() -> None:
 
     repo_root = Path(__file__).resolve().parent.parent
 
+    print(f"Split      : {args.split}\n")
+
     if args.model == "video_mae":
         from config.models import VideoMAEConfig
         ckpt = args.checkpoint or str(repo_root / VideoMAEConfig().output_dir)
         print(f"Model      : VideoMAE")
         print(f"Checkpoint : {ckpt}\n")
-        eval_video_mae(ckpt, args.batch_size, args.num_clips)
+        eval_video_mae(ckpt, args.batch_size, args.num_clips, args.split)
 
     elif args.model == "vivit":
         from config.models import ViViTConfig
         ckpt = args.checkpoint or str(repo_root / ViViTConfig().output_dir)
         print(f"Model      : ViViT")
         print(f"Checkpoint : {ckpt}\n")
-        eval_vivit(ckpt, args.batch_size, args.num_clips)
+        eval_vivit(ckpt, args.batch_size, args.num_clips, args.split)
 
     elif args.model == "two_stream":
         from config.models.two_stream_config import TwoStreamConfig
@@ -608,7 +827,7 @@ def main() -> None:
         ckpt = args.checkpoint or str(default_ckpt)
         print(f"Model      : Two-Stream CNN")
         print(f"Checkpoint : {ckpt}\n")
-        eval_two_stream(ckpt, args.batch_size, args.num_clips)
+        eval_two_stream(ckpt, args.batch_size, args.num_clips, args.split)
 
     elif args.model == "pose":
         from config.models.pose_config import PoseConfig
@@ -616,7 +835,7 @@ def main() -> None:
         ckpt = args.checkpoint or str(default_ckpt)
         print(f"Model      : Pose MLP")
         print(f"Checkpoint : {ckpt}\n")
-        eval_pose(ckpt, args.batch_size)
+        eval_pose(ckpt, args.batch_size, args.split)
 
     elif args.model == "cnn_fusion":
         from config.models.cnn_fusion_config import CNNFusionConfig
@@ -624,7 +843,33 @@ def main() -> None:
         ckpt = args.checkpoint or str(default_ckpt)
         print(f"Model      : CNN Fusion")
         print(f"Checkpoint : {ckpt}\n")
-        eval_cnn_fusion(ckpt, args.batch_size, args.num_clips)
+        eval_cnn_fusion(ckpt, args.batch_size, args.num_clips, args.split)
+
+    elif args.model == "llava_onevision":
+        from config.models import LlavaOnevisionConfig
+        default_ckpt = repo_root / LlavaOnevisionConfig().output_dir / "model.safetensors"
+        ckpt = args.checkpoint or str(default_ckpt)
+        effective_text = args.text_conditioned if args.text_conditioned is not None else True
+        print(f"Model      : LLaVA-OneVision (cached embeddings, text_conditioned={effective_text})")
+        print(f"Checkpoint : {ckpt}\n")
+        eval_llava_onevision(ckpt, args.batch_size, args.split, text_conditioned=effective_text)
+
+    elif args.model == "video_salmonn":
+        from config.models.video_salmonn_config import VideoSalmonnConfig
+        default_ckpt = repo_root / VideoSalmonnConfig().output_dir / "model.safetensors"
+        ckpt = args.checkpoint or str(default_ckpt)
+        effective_text = args.text_conditioned if args.text_conditioned is not None else False
+        print(f"Model      : video-SALMONN-2 (cached embeddings, text_conditioned={effective_text})")
+        print(f"Checkpoint : {ckpt}\n")
+        eval_video_salmonn(ckpt, args.batch_size, args.split, text_conditioned=effective_text)
+
+    elif args.model == "videoprism":
+        from config.models.videoprism_config import VideoPrismConfig
+        default_ckpt = repo_root / VideoPrismConfig().output_dir / "model.safetensors"
+        ckpt = args.checkpoint or str(default_ckpt)
+        print(f"Model      : VideoPrism (cached embeddings)")
+        print(f"Checkpoint : {ckpt}\n")
+        eval_videoprism(ckpt, args.batch_size, args.split)
 
 
 if __name__ == "__main__":

@@ -13,14 +13,20 @@ from model.two_stream.model import build_model as _build_two_stream
 from model.vivit.model import build_model as _build_vivit
 from model.pose.model import build_model as _build_pose
 from model.cnn_fusion.model import build_model as _build_cnn_fusion
+from model.llava_onevision.model import build_model as _build_llava_onevision
+from model.video_salmonn.model import build_model as _build_video_salmonn
+from model.videoprism.model import build_model as _build_videoprism
 
 # Registry maps model_name → callable(**kwargs) → (model, processor)
 MODEL_REGISTRY: Dict[str, Any] = {
-    "video_mae":  _build_video_mae,
-    "two_stream": _build_two_stream,
-    "vivit":      _build_vivit,
-    "pose":       _build_pose,
-    "cnn_fusion": _build_cnn_fusion,
+    "video_mae":       _build_video_mae,
+    "two_stream":      _build_two_stream,
+    "vivit":           _build_vivit,
+    "pose":            _build_pose,
+    "cnn_fusion":      _build_cnn_fusion,
+    "llava_onevision": _build_llava_onevision,
+    "video_salmonn":   _build_video_salmonn,
+    "videoprism":      _build_videoprism,
 }
 
 
