@@ -25,13 +25,12 @@ from torch.utils.data import DataLoader
 from config.models.pose_config import PoseConfig
 from model.pose.model import PoseMLP, build_model
 from utils.dataset import (
-    _collect_labeled_paths,
-    _split_paths,
     build_label_maps,
     resolve_data_roots,
     resolve_roots_for_label_maps,
 )
-from utils.pose_dataset import PoseFeatureDataset, filter_valid_pose
+from utils.pose_dataset import PoseFeatureDataset, pose_path_for_video
+from utils.splits import canonical_splits, filter_split
 
 
 # ── Collate ───────────────────────────────────────────────────────────────────
@@ -131,11 +130,22 @@ def main():
 
     pose_root = repo_root / cfg.pose_root
 
-    all_paths = _collect_labeled_paths(data_roots, label2id)
-    all_paths = filter_valid_pose(all_paths, pose_root, repo_root=repo_root)
-    train_paths, val_paths, _ = _split_paths(
-        all_paths, cfg.train_split, cfg.val_split, cfg.seed
+    # Canonical split first, then drop videos lacking pose *per split*.
+    train_paths, val_paths, _ = canonical_splits(
+        data_roots=cfg.data_roots,
+        test_data_roots=cfg.test_data_roots,
+        label2id=label2id,
+        train_split=cfg.train_split,
+        val_split=cfg.val_split,
+        seed=cfg.seed,
+        repo_root=repo_root,
     )
+
+    def _has_pose(path_str: str) -> bool:
+        return pose_path_for_video(Path(path_str), pose_root, repo_root).exists()
+
+    train_paths = filter_split(train_paths, _has_pose, name="train")
+    val_paths   = filter_split(val_paths,   _has_pose, name="val")
 
     train_ds = PoseFeatureDataset(
         labeled_paths=train_paths,

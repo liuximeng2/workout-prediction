@@ -22,7 +22,8 @@ class ViViTConfig(BaseConfig):
 
     # ── Video sampling ───────────────────────────────────────────────────────
     # ViViT (google/vivit-b-16x2-kinetics400) expects 32 frames.
-    # ``clip_duration = num_frames * sample_rate / fps``
+    # ``clip_duration = num_frames * sample_rate / fps`` — driven by the
+    # architecture's native input budget.
     sample_rate: int = 4
     fps: int = 30
 

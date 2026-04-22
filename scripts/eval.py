@@ -33,13 +33,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from utils.dataset import (
-    _collect_labeled_paths,
-    _split_paths,
     build_label_maps,
-    filter_valid_flow,
+    flow_dir_for_video,
     resolve_data_roots,
     resolve_roots_for_label_maps,
 )
+from utils.splits import canonical_splits, filter_split
 
 
 def parse_args() -> argparse.Namespace:
@@ -270,7 +269,7 @@ def eval_vivit(ckpt: str, batch_size: int, num_clips: int = 1) -> None:
 def eval_pose(ckpt_path: str, batch_size: int) -> None:
     from config.models.pose_config import PoseConfig
     from model.pose.model import build_model
-    from utils.pose_dataset import PoseFeatureDataset, filter_valid_pose
+    from utils.pose_dataset import PoseFeatureDataset, pose_path_for_video
 
     cfg = PoseConfig()
     repo_root = Path(__file__).resolve().parent.parent
@@ -296,22 +295,22 @@ def eval_pose(ckpt_path: str, batch_size: int) -> None:
           f"(best val acc in ckpt: {ckpt.get('best_val_acc', float('nan')):.3f})")
 
     # ── Build test dataset ────────────────────────────────────────────────────
-    data_roots = list(resolve_data_roots(cfg.data_roots, repo_root=repo_root))
     pose_root = repo_root / cfg.pose_root
 
-    test_paths = None
-    if cfg.test_data_roots:
-        test_roots = list(resolve_data_roots(cfg.test_data_roots, repo_root=repo_root))
-        if test_roots and test_roots[0].is_dir():
-            all_test = _collect_labeled_paths(test_roots, label2id)
-            all_test = filter_valid_pose(all_test, pose_root, repo_root=repo_root)
-            if all_test:
-                test_paths = all_test
+    _, _, test_paths = canonical_splits(
+        data_roots=cfg.data_roots,
+        test_data_roots=cfg.test_data_roots,
+        label2id=label2id,
+        train_split=cfg.train_split,
+        val_split=cfg.val_split,
+        seed=cfg.seed,
+        repo_root=repo_root,
+    )
 
-    if test_paths is None:
-        all_paths = _collect_labeled_paths(data_roots, label2id)
-        all_paths = filter_valid_pose(all_paths, pose_root, repo_root=repo_root)
-        _, _, test_paths = _split_paths(all_paths, cfg.train_split, cfg.val_split, cfg.seed)
+    def _has_pose(path_str: str) -> bool:
+        return pose_path_for_video(Path(path_str), pose_root, repo_root).exists()
+
+    test_paths = filter_split(test_paths, _has_pose, name="test")
 
     test_ds = PoseFeatureDataset(
         labeled_paths=test_paths,
@@ -390,19 +389,15 @@ def eval_cnn_fusion(ckpt_path: str, batch_size: int, num_clips: int = 1) -> None
           f"(best val acc in ckpt: {ckpt.get('best_val_acc', float('nan')):.3f})")
 
     # ── Build test dataset ────────────────────────────────────────────────────
-    data_roots = list(resolve_data_roots(cfg.data_roots, repo_root=repo_root))
-
-    test_paths = None
-    if cfg.test_data_roots:
-        test_roots = list(resolve_data_roots(cfg.test_data_roots, repo_root=repo_root))
-        if test_roots and test_roots[0].is_dir():
-            all_test = _collect_labeled_paths(test_roots, label2id)
-            if all_test:
-                test_paths = all_test
-
-    if test_paths is None:
-        all_paths = _collect_labeled_paths(data_roots, label2id)
-        _, _, test_paths = _split_paths(all_paths, cfg.train_split, cfg.val_split, cfg.seed)
+    _, _, test_paths = canonical_splits(
+        data_roots=cfg.data_roots,
+        test_data_roots=cfg.test_data_roots,
+        label2id=label2id,
+        train_split=cfg.train_split,
+        val_split=cfg.val_split,
+        seed=cfg.seed,
+        repo_root=repo_root,
+    )
 
     val_transform = make_val_transform(cfg.num_frames, _RESIZE_TO, _IMAGENET_MEAN, _IMAGENET_STD)
     test_ds = VideoClipDataset(
@@ -489,23 +484,23 @@ def eval_two_stream(ckpt_path: str, batch_size: int, num_clips: int = 1) -> None
           f"(best val acc in ckpt: {ckpt.get('best_val_acc', float('nan')):.3f})")
 
     # ── Build test dataset ────────────────────────────────────────────────────
-    data_roots = list(resolve_data_roots(cfg.data_roots, repo_root=repo_root))
     flow_root = repo_root / cfg.flow_root
 
-    # Use explicit test root if present, else fall back to stratified split
-    test_paths = None
-    if cfg.test_data_roots:
-        test_roots = list(resolve_data_roots(cfg.test_data_roots, repo_root=repo_root))
-        if test_roots and test_roots[0].is_dir():
-            all_test = _collect_labeled_paths(test_roots, label2id)
-            all_test = filter_valid_flow(all_test, flow_root, repo_root=repo_root)
-            if all_test:
-                test_paths = all_test
+    _, _, test_paths = canonical_splits(
+        data_roots=cfg.data_roots,
+        test_data_roots=cfg.test_data_roots,
+        label2id=label2id,
+        train_split=cfg.train_split,
+        val_split=cfg.val_split,
+        seed=cfg.seed,
+        repo_root=repo_root,
+    )
 
-    if test_paths is None:
-        all_paths = _collect_labeled_paths(data_roots, label2id)
-        all_paths = filter_valid_flow(all_paths, flow_root, repo_root=repo_root)
-        _, _, test_paths = _split_paths(all_paths, cfg.train_split, cfg.val_split, cfg.seed)
+    def _has_flow(path_str: str) -> bool:
+        fdir = flow_dir_for_video(Path(path_str), flow_root, repo_root)
+        return (fdir / "meta.npy").exists()
+
+    test_paths = filter_split(test_paths, _has_flow, name="test")
 
     test_ds = TwoStreamDataset(
         labeled_paths=test_paths,

@@ -9,11 +9,14 @@ from utils.dataset import (
     resolve_roots_for_label_maps,
 )
 from utils.flow_dataset import TwoStreamDataset
+from utils.splits import canonical_splits, filter_split
 from utils.transforms import make_train_transform, make_val_transform
 
 __all__ = [
     "build_datasets",
     "build_label_maps",
+    "canonical_splits",
+    "filter_split",
     "filter_valid_flow",
     "flow_dir_for_video",
     "resolve_data_roots",

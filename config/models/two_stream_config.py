@@ -32,7 +32,7 @@ class TwoStreamConfig(BaseConfig):
     freeze_strategy: str = "full"
 
     # ── Video sampling ───────────────────────────────────────────────────────
-    clip_duration: float = 4        # seconds (matches VideoMAE: 16 frames @ 4 stride / 30 fps)
+    clip_duration: float = 4.0         # seconds of video per sample
 
     # ── Training hyperparameters ─────────────────────────────────────────────
     num_epochs: int = 20
