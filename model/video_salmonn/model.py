@@ -240,6 +240,7 @@ def load_full_model(model_ckpt: str):
 
     # Materialize any remaining meta tensors (tied weights / buffers absent from
     # the checkpoint, e.g. lm_head.weight tied to embed_tokens, rotary inv_freq).
+    head_dim = qwen2_cfg.hidden_size // qwen2_cfg.num_attention_heads
     for module in qwen2.modules():
         for param_name, param in list(module.named_parameters(recurse=False)):
             if param.is_meta:
@@ -247,10 +248,21 @@ def load_full_model(model_ckpt: str):
                         nn.Parameter(torch.empty(param.shape, dtype=torch.bfloat16)))
         for buf_name, buf in list(module.named_buffers(recurse=False)):
             if buf.is_meta:
-                module.register_buffer(
-                    buf_name,
-                    torch.empty(buf.shape,
-                                dtype=torch.bfloat16 if buf.is_floating_point() else buf.dtype))
+                if buf_name == "inv_freq":
+                    # torch.empty → garbage → cos(inf)=NaN in rotary attention.
+                    # Recompute from rope_theta, matching Qwen2RotaryEmbedding.__init__.
+                    dim = buf.shape[0] * 2
+                    rope_theta = float(llm_cfg_dict.get("rope_theta", 1_000_000.0))
+                    inv_freq = 1.0 / (rope_theta ** (
+                        torch.arange(0, dim, 2, dtype=torch.float32) / dim
+                    ))
+                    module.register_buffer(buf_name, inv_freq, persistent=False)
+                else:
+                    module.register_buffer(
+                        buf_name,
+                        torch.zeros(buf.shape,
+                                    dtype=torch.bfloat16 if buf.is_floating_point()
+                                    else buf.dtype))
 
     # ── Tokenizer ──────────────────────────────────────────────────────────────
     tokenizer = AutoTokenizer.from_pretrained(model_ckpt, trust_remote_code=True)
