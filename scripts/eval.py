@@ -847,9 +847,10 @@ def main() -> None:
 
     elif args.model == "llava_onevision":
         from config.models import LlavaOnevisionConfig
-        default_ckpt = repo_root / LlavaOnevisionConfig().output_dir / "model.safetensors"
-        ckpt = args.checkpoint or str(default_ckpt)
         effective_text = args.text_conditioned if args.text_conditioned is not None else True
+        default_ckpt_dir = "llava-onevision-workout" if effective_text else "llava-onevision-noprompt"
+        default_ckpt = repo_root / "checkpoints" / default_ckpt_dir / "model.safetensors"
+        ckpt = args.checkpoint or str(default_ckpt)
         print(f"Model      : LLaVA-OneVision (cached embeddings, text_conditioned={effective_text})")
         print(f"Checkpoint : {ckpt}\n")
         eval_llava_onevision(ckpt, args.batch_size, args.split, text_conditioned=effective_text)

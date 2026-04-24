@@ -26,9 +26,9 @@ class LlavaOnevisionConfig(BaseConfig):
     fps: int = 30
 
     # ── Training hyperparameters ─────────────────────────────────────────────
-    num_epochs: int = 10
-    batch_size: int = 2
-    learning_rate: float = 2e-5
+    num_epochs: int = 30
+    batch_size: int = 32
+    learning_rate: float = 1e-3
     warmup_ratio: float = 0.1
     logging_steps: int = 10
     metric_for_best_model: str = "accuracy"
