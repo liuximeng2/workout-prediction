@@ -10,7 +10,7 @@ Fine-tuned on the [Gym Workout Exercises Video](https://www.kaggle.com/datasets/
 | **VideoMAE** | Vision Transformer | `scripts/train.py --model video_mae` | Masked autoencoder pre-trained on Kinetics-400; fine-tuned end-to-end |
 | **ViViT** | Vision Transformer | `scripts/train.py --model vivit` | Google's Video Vision Transformer (ViViT-B/16x2) |
 | **LLaVA-OneVision** | Multimodal VLM + linear head | `scripts/train.py --model llava_onevision` | LLaVA-OneVision (Qwen2-0.5B); optional task prompt; full fine-tune or cached-embedding head training |
-| **video-SALMONN-2** | SigLIP visual encoder + head | `scripts/train.py --model video_salmonn` | Visual encoder + projector from video-SALMONN-2; linear head on frozen embeddings (7B LLM not loaded) |
+| **video-SALMONN-2 (not working)** | SigLIP visual encoder + head | `scripts/train.py --model video_salmonn` | Visual encoder + projector from video-SALMONN-2; linear head on frozen embeddings (7B LLM not loaded) |
 | **VideoPrism** | ViT-B video encoder + head | `scripts/train.py --model videoprism` | Google VideoPrism base encoder; linear head on frozen JAX-precomputed embeddings |
 | **CNN Fusion** | ResNet-50 per-frame + sum pool | `scripts/train_cnn_fusion.py` | Shared CNN backbone over sampled frames, temporally summed, linear head |
 | **Two-Stream CNN** | ResNet-50 dual stream | `scripts/train_two_stream.py` | Spatial (RGB) + temporal (optical flow) streams with learnable fusion |
@@ -367,12 +367,21 @@ python scripts/train.py --model vivit
 
 ### LLaVA-OneVision
 
+LLaVA-OV supports two variants: a **text-conditioned** variant (the model receives a task instruction alongside the video frames) and a **no-prompt** variant. Each variant needs its own embedding cache and saves to a separate checkpoint directory.
+
 ```bash
-python scripts/train.py --model llava_onevision
-# optional: --no_text_conditioned / --text_conditioned to match your embedding cache
+# 1. Pre-compute embedding caches (run once)
+python scripts/precompute_llava_embeddings.py                  # -> data/llava_embeddings/
+python scripts/precompute_llava_embeddings.py --no_text_conditioned  # -> data/llava_embeddings_notxt/
+
+# 2. Train the linear classifier head on the cached embeddings
+python scripts/train.py --model llava_onevision                # saves to checkpoints/llava-onevision-workout/
+python scripts/train.py --model llava_onevision \
+    --no_text_conditioned \
+    --output_dir checkpoints/llava-onevision-noprompt          # saves to checkpoints/llava-onevision-noprompt/
 ```
 
-### video-SALMONN-2
+### video-SALMONN-2 (not working)
 
 ```bash
 python scripts/precompute_salmonn_embeddings.py
@@ -381,9 +390,14 @@ python scripts/train.py --model video_salmonn
 
 ### VideoPrism
 
+VideoPrism always operates on pre-computed embeddings — the JAX encoder is never run during training.
+
 ```bash
-python scripts/precompute_videoprism_embeddings.py
-python scripts/train.py --model videoprism
+# 1. Pre-compute embedding cache (run once)
+python scripts/precompute_videoprism_embeddings.py    # -> data/videoprism_embeddings/
+
+# 2. Train the linear classifier head
+python scripts/train.py --model videoprism            # saves to checkpoints/videoprism/
 ```
 
 ### CNN Fusion
@@ -426,10 +440,18 @@ python scripts/eval.py --model pose --checkpoint checkpoints/pose-workout/best.p
 # CNN Fusion
 python scripts/eval.py --model cnn_fusion --checkpoint checkpoints/cnn-fusion/best.pt
 
-# Cached-embedding heads (paths follow each config's output_dir; default filenames shown)
-python scripts/eval.py --model llava_onevision --checkpoint checkpoints/llava-onevision-workout/model.safetensors
+# Cached-embedding heads — checkpoint path and embedding cache must match the training variant
+# LLaVA-OV text-conditioned (reads data/llava_embeddings/)
+python scripts/eval.py --model llava_onevision
+
+# LLaVA-OV no-prompt (reads data/llava_embeddings_notxt/)
+python scripts/eval.py --model llava_onevision --no_text_conditioned
+
+# video-SALMONN-2
 python scripts/eval.py --model video_salmonn --checkpoint checkpoints/video-salmonn/model.safetensors
-python scripts/eval.py --model videoprism --checkpoint checkpoints/videoprism/model.safetensors
+
+# VideoPrism (reads data/videoprism_embeddings/)
+python scripts/eval.py --model videoprism
 ```
 
 Multi-clip evaluation (average predictions over multiple temporal clips per video) applies to **pixel / flow** models, for example:
