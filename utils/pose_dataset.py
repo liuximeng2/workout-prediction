@@ -206,6 +206,10 @@ def filter_valid_pose(
 class PoseFeatureDataset(Dataset):
     """Dataset that loads precomputed keypoints and returns engineered feature vectors.
 
+    The full per-video keypoint sequence is used — FFT-based cadence and
+    temporal statistics benefit from the longest available horizon, and the
+    pose MLP's input is fixed-dim regardless of T.
+
     Args:
         labeled_paths: List of ``(video_path_str, {"label": int})`` tuples.
         pose_root:     Root directory containing ``<class>/<video>.npy`` pose files.

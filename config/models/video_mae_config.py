@@ -22,7 +22,8 @@ class VideoMAEConfig(BaseConfig):
 
     # ── Video sampling ───────────────────────────────────────────────────────
     # ``num_frames`` is read from the model's own config at runtime.
-    # ``clip_duration = num_frames * sample_rate / fps``
+    # ``clip_duration = num_frames * sample_rate / fps`` — driven by the
+    # architecture's native input budget.
     sample_rate: int = 4
     fps: int = 30
 

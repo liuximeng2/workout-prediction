@@ -27,14 +27,13 @@ from torch.utils.data import DataLoader
 from config.models.two_stream_config import TwoStreamConfig
 from model.two_stream.model import TwoStreamNet, apply_freeze_strategy, build_model
 from utils.dataset import (
-    _collect_labeled_paths,
-    _split_paths,
     build_label_maps,
-    filter_valid_flow,
+    flow_dir_for_video,
     resolve_data_roots,
     resolve_roots_for_label_maps,
 )
 from utils.flow_dataset import TwoStreamDataset
+from utils.splits import canonical_splits, filter_split
 
 
 # ── Collate ───────────────────────────────────────────────────────────────────
@@ -134,11 +133,25 @@ def main():
 
     flow_root = repo_root / cfg.flow_root
 
-    all_paths = _collect_labeled_paths(data_roots, label2id)
-    all_paths = filter_valid_flow(all_paths, flow_root, repo_root=repo_root)
-    train_paths, val_paths, _ = _split_paths(
-        all_paths, cfg.train_split, cfg.val_split, cfg.seed
+    # Canonical split first, then drop videos lacking flow *per split*.
+    # Splitting on the unfiltered set keeps train/val composition identical
+    # across models; only this model's usable samples shrink.
+    train_paths, val_paths, _ = canonical_splits(
+        data_roots=cfg.data_roots,
+        test_data_roots=cfg.test_data_roots,
+        label2id=label2id,
+        train_split=cfg.train_split,
+        val_split=cfg.val_split,
+        seed=cfg.seed,
+        repo_root=repo_root,
     )
+
+    def _has_flow(path_str: str) -> bool:
+        fdir = flow_dir_for_video(Path(path_str), flow_root, repo_root)
+        return (fdir / "meta.npy").exists()
+
+    train_paths = filter_split(train_paths, _has_flow, name="train")
+    val_paths   = filter_split(val_paths,   _has_flow, name="val")
 
     train_ds = TwoStreamDataset(
         labeled_paths=train_paths,
@@ -156,6 +169,7 @@ def main():
         mode="val",
         repo_root=repo_root,
     )
+    # cfg.clip_duration comes from BaseConfig → shared with every other model.
 
     train_loader = DataLoader(
         train_ds, batch_size=cfg.batch_size, shuffle=True,

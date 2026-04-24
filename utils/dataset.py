@@ -217,7 +217,8 @@ class VideoClipDataset(Dataset):
             fps = float(stream.average_rate) if stream.average_rate else 30.0
             # duration in seconds from container or stream metadata
             if container.duration:
-                duration = float(container.duration) / av.time_base
+                # container.duration is in AV_TIME_BASE units (microseconds).
+                duration = float(container.duration) * float(av.time_base)
             elif stream.duration and stream.time_base:
                 duration = float(stream.duration * stream.time_base)
             else:
@@ -292,19 +293,18 @@ def build_datasets(
     Returns:
         ``(train_dataset, val_dataset, test_dataset)``
     """
-    all_paths = _collect_labeled_paths(data_roots, label2id)
-    use_explicit_test = False
-    if test_data_roots and test_data_roots[0].is_dir():
-        explicit_test = _collect_labeled_paths(tuple(test_data_roots), label2id)
-        if len(explicit_test) > 0:
-            use_explicit_test = True
-            train_paths, val_paths, _ = _split_paths(all_paths, train_split, val_split, seed)
-            test_paths = explicit_test
+    # Delegate to the canonical-split helper so every model sees the same
+    # (train, val, test) partition by video path.
+    from utils.splits import canonical_splits as _canonical_splits
 
-    if not use_explicit_test:
-        train_paths, val_paths, test_paths = _split_paths(
-            all_paths, train_split, val_split, seed
-        )
+    train_paths, val_paths, test_paths = _canonical_splits(
+        data_roots=data_roots,
+        test_data_roots=test_data_roots,
+        label2id=label2id,
+        train_split=train_split,
+        val_split=val_split,
+        seed=seed,
+    )
 
     train_dataset = VideoClipDataset(
         labeled_paths=train_paths,

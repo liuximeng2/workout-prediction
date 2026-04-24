@@ -179,7 +179,8 @@ class TwoStreamDataset(Dataset):
             stream = container.streams.video[0]
             fps = float(stream.average_rate) if stream.average_rate else 30.0
             if container.duration:
-                duration = float(container.duration) / av.time_base
+                # container.duration is in AV_TIME_BASE units (microseconds).
+                duration = float(container.duration) * float(av.time_base)
             elif stream.duration and stream.time_base:
                 duration = float(stream.duration * stream.time_base)
             else:
